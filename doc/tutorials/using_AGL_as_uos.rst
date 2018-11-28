@@ -68,6 +68,7 @@ Setup AGL as a Guest OS in ACRN
   You are now all set to start the User OS (UOS)
 
   .. code-block:: none
+  
      sudo /usr/share/acrn/samples/nuc/launch_uos.sh
 
   **Congratulations**, you are now watching the User OS booting up!
@@ -75,6 +76,7 @@ Setup AGL as a Guest OS in ACRN
   And you should be able to see the console of AGL:
   
     .. code-block:: none
+    
      ...
      [  OK  ] Found device /dev/ttyS1.
      [  OK  ] Started Serial Getty on ttyS1.
