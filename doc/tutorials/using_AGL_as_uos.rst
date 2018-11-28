@@ -35,19 +35,19 @@ Setup AGL as a Guest OS in ACRN
           :align: center
 
 
-#. Setup ACRN SOS
+#. Prepare the Service OS (SOS)
 
     Follow the instructions found in the Getting started guide for Intel NUC 
     to setup SOS :ref:`getting-started-apl-nuc`
 
 
-#. Setup ACRN UOS
-  To launch AGL as UOS, we need to download the image of AGL from:
-  https://download.automotivelinux.org/AGL/release/eel/5.1.0/intel-corei7-64/deploy/images/intel-corei7-64/agl-demo-platform-crosssdk-intel-corei7-64.wic.xz
+#.  Prepare the User OS (UOS)
 
-  Here we use version “eel_5.1.0”, and you can try other release of AGL in ACRN.
-
-  .. code-block: none
+    The latest image of AGL release from this area:
+    `agl-demo-platform-crosssdk-intel-corei7-64.wic.xz <https://download.automotivelinux.org/AGL/release/eel/5.1.0/intel-corei7-64/deploy/images/intel-corei7-64/agl-demo-platform-crosssdk-intel-corei7-64.wic.xz>`_
+    Here we use version “eel_5.1.0”, and you can try other release of AGL in ACRN.
+    
+    .. code-block: none
 
      projectacrn/
         $ cd ~
