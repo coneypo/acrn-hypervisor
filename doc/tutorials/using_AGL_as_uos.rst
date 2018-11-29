@@ -1,7 +1,7 @@
 .. _acrn_doc:
 
 Using AGL as the User OS
-#############################
+########################
 
 This tutorial describes the steps to run AGL as the User OS on ACRN hypervisor 
 and the problems we got at current stage. 
@@ -9,11 +9,11 @@ We hope the steps documented in this article could help us to reproduce the prob
 and provide some information for further debugging.
 In the following instructions we’ll build on material in the Getting started guide for Intel NUC.
 
-   .. image:: images/The-overview-of-AGL-as-UOS.png
-      :align: center
+.. image:: images/The-overview-of-AGL-as-UOS.png
+   :align: center
 
 Introduction of AGL
-**********************
+*******************
 
 Automotive Grade Linux (AGL) is an open source project of The Linux Foundation 
 that is building a Linux-based, open software platform for automotive application.
@@ -22,9 +22,9 @@ For more information about AGL, please visit AGL’s official website:
 https://www.automotivelinux.org/
 
 Steps for using AGL as the UOS
-*******************************
+******************************
 
-#. Hardware preparation
+1. Hardware preparation
 
     The regulatory model of NUC we used is `NUC6CAYH 
     <https://www.intel.com/content/www/us/en/products/boards-kits/nuc/kits/nuc6cayh.html>`_
