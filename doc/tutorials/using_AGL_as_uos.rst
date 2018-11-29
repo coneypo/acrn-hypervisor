@@ -3,15 +3,16 @@
 Using AGL as the User OS
 #############################
 
-In this article we will discusse the way to run AGL as a Guest OS on ACRN hypervisor 
+This tutorial describes the steps to run AGL as the User OS on ACRN hypervisor 
 and the problems we got at current stage. 
-We hope the steps documented in this article could help us to reproduce the problem 
-much easier and provide some information for further debugging.
+We hope the steps documented in this article could help us to reproduce the problem much easier 
+and provide some information for further debugging.
+In the following instructions we’ll build on material in the Getting started guide for Intel NUC.
 
    .. image:: images/The-overview-of-AGL-as-UOS.png
       :align: center
 
-Overview
+Introduction of AGL
 **********************
 
 Automotive Grade Linux (AGL) is an open source project of The Linux Foundation 
@@ -20,16 +21,17 @@ that is building a Linux-based, open software platform for automotive applicatio
 For more information about AGL, please visit AGL’s official website:
 https://www.automotivelinux.org/
 
-Setup AGL as a Guest OS in ACRN
+Steps for using AGL as the UOS
 *******************************
 
 #. Hardware preparation
 
-    The regulatory model of NUC we used is “NUC6CAYH”, and for more information 
-    about this kind of NUC, please visit the official website:
-    https://www.intel.com/content/www/us/en/products/boards-kits/nuc/kits/nuc6cayh.html
-    First we need to prepare 2 displays (1xHDMI, 1xVGA), one for SOS and one 
-    for UOS, and connect these 2 displays to NUC as picture below.
+    The regulatory model of NUC we used is `NUC6CAYH 
+    <https://www.intel.com/content/www/us/en/products/boards-kits/nuc/kits/nuc6cayh.html>`_
+    adn this NUC has two display ports: 1x HDMI, 1x VGA;
+    
+    So we need to prepare 2 displays, one for SOS and one for UOS, 
+    and connect these 2 displays to NUC as picture below.
 
        .. image:: images/The-displayports-of-NUC.png
           :align: center
@@ -38,10 +40,9 @@ Setup AGL as a Guest OS in ACRN
 #. Prepare the Service OS (SOS)
 
     Follow the instructions found in the Getting started guide for Intel NUC 
-    to setup SOS :ref:`getting-started-apl-nuc`
+    to setup SOS : `getting-started-apl-nuc <https://projectacrn.github.io/latest/getting-started/apl-nuc.html>`_
 
-
-#.  Prepare the User OS (UOS)
+#. Prepare the User OS (UOS)
 
     The latest image of AGL release from this area:
     `agl-demo-platform-crosssdk-intel-corei7-64.wic.xz <https://download.automotivelinux.org/AGL/release/eel/5.1.0/intel-corei7-64/deploy/images/intel-corei7-64/agl-demo-platform-crosssdk-intel-corei7-64.wic.xz>`_
@@ -55,8 +56,8 @@ Setup AGL as a Guest OS in ACRN
         $ unxz agl-demo-platform-crosssdk-intel-corei7-64.wic.xz
         
         
-  You need to adjust the ``/usr/share/acrn/samples/nuc/launch_uos.sh`` script
-  to match your installation. These are the couple of lines you need to modify:
+  You need to adjust the ``/usr/share/acrn/samples/nuc/launch_uos.sh`` script to match your installation. 
+  These are the couple of lines you need to modify:
 
   .. code-block:: none
 
