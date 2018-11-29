@@ -31,11 +31,7 @@ Steps for using AGL as the UOS
     adn this NUC has two display ports: 1x HDMI, 1x VGA;
     
     So we need to prepare 2 displays, one for SOS and one for UOS, 
-    and connect these 2 displays to NUC as picture below.
-
-       .. image:: images/The-displayports-of-NUC.png
-          :align: center
-
+    and connect these 2 displays to NUC.
 
 #. Prepare the Service OS (SOS)
 
@@ -56,43 +52,41 @@ Steps for using AGL as the UOS
         $ unxz agl-demo-platform-crosssdk-intel-corei7-64.wic.xz
         
         
-  You need to adjust the ``/usr/share/acrn/samples/nuc/launch_uos.sh`` script to match your installation. 
-  These are the couple of lines you need to modify:
-
-  .. code-block:: none
-
-     -s 3,virtio-blk,/root/agl-demo-platform-crosssdk-intel-corei7-64-20180726071132.rootfs.wic \
-     -B "root=/dev/vda2 
+    You need to adjust the ``/usr/share/acrn/samples/nuc/launch_uos.sh`` script to match your installation.
+    These are the couple of lines you need to modify:
+    
+    .. code-block:: none
+       -s 3,virtio-blk,/root/agl-demo-platform-crosssdk-intel-corei7-64-20180726071132.rootfs.wic \
+       -B "root=/dev/vda2 
      
 #. Start the User OS (UOS)
 
-  You are now all set to start the User OS (UOS)
-
-  .. code-block:: none
+    You are now all set to start the User OS (UOS)
+    
+    .. code-block:: none
   
-     sudo /usr/share/acrn/samples/nuc/launch_uos.sh
-
-  **Congratulations**, you are now watching the User OS booting up!
-
-  And you should be able to see the console of AGL:
+       sudo /usr/share/acrn/samples/nuc/launch_uos.sh
+       
+    **Congratulations**, you are now watching the User OS booting up!
+    
+    And you should be able to see the console of AGL:
   
     .. code-block:: none
-    
-     ...
-     [  OK  ] Found device /dev/ttyS1.
-     [  OK  ] Started Serial Getty on ttyS1.
-     [  OK  ] Started Hostname Service.
-     [  OK  ] Started Modem Manager.
-     [  OK  ] Found device /dev/hvc0.
-     [  OK  ] Started Serial Getty on hvc0.
-     [  OK  ] Reached target Login Prompts.
-     [  OK  ] Reached target Multi-User System.
-              Starting Update UTMP about System Runlevel Changes...
-     [  OK  ] Started Update UTMP about System Runlevel Changes.
+       ...
+       [  OK  ] Found device /dev/ttyS1.
+       [  OK  ] Started Serial Getty on ttyS1.
+       [  OK  ] Started Hostname Service.
+       [  OK  ] Started Modem Manager.
+       [  OK  ] Found device /dev/hvc0.
+       [  OK  ] Started Serial Getty on hvc0.
+       [  OK  ] Reached target Login Prompts.
+       [  OK  ] Reached target Multi-User System.
+                Starting Update UTMP about System Runlevel Changes...
+       [  OK  ] Started Update UTMP about System Runlevel Changes.
      
-     Automotive Grade Linux 5.1.0 intel-corei7-64 ttyS0
+       Automotive Grade Linux 5.1.0 intel-corei7-64 ttyS0
      
-     intel-corei7-64 login:
+       intel-corei7-64 login:
      
-When you see the output of the console above, that means AGL has been loaded 
-and now you could operate on the console. 
+    When you see the output of the console above, that means AGL has been loaded 
+    and now you could operate on the console. 
