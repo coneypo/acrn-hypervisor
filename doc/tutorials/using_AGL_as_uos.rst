@@ -9,7 +9,6 @@ We hope the steps documented in this article could help us to reproduce the
 problem much easier and provide some information for further debugging.
 
 .. image:: images/The-overview-of-AGL-as-UOS.png
-   
    :align: center
 
 Introduction of AGL
@@ -78,7 +77,6 @@ Steps for using AGL as the UOS
    And you should be able to see the console of AGL:
 
    .. image:: images/The-console-of-AGL.png
-      
       :align: center
      
    When you see the output of the console above, that means AGL has been loaded 
@@ -94,7 +92,6 @@ By debugging, we identified the problem as an issue of ``ivi-shell.so`` library,
 this library is not well supported. But we can light the screen with the GUI of weston like figure below.
 
 .. image:: images/The-GUI-of-weston.png
-   
    :align: center
    
 To enable weston in AGL, We need to modify ``weston.ini``, which is the configuration file of weston.
