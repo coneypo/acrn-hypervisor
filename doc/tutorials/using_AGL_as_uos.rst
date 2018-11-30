@@ -38,9 +38,9 @@ Steps for using AGL as the UOS
 
 #. Prepare the User OS (UOS)
 
-   The latest image of AGL release from this area:
+   Download AGL's image of ``eel_5.1.0`` release from:
    `agl-demo-platform-crosssdk-intel-corei7-64.wic.xz <https://download.automotivelinux.org/AGL/release/eel/5.1.0/intel-corei7-64/deploy/images/intel-corei7-64/agl-demo-platform-crosssdk-intel-corei7-64.wic.xz>`_
-   Here we use version “eel_5.1.0”, and you can try other release of AGL in ACRN.
+   Here we use version ``eel_5.1.0``, and you can try other release of AGL in ACRN.
 
    .. code-block: none
    
@@ -101,10 +101,12 @@ To enable weston in AGL, We need to modify ``weston.ini``, which is the configur
    vim /etc/xdg/weston/weston.ini
    
 The changes of ``weston.ini``:
+
 #. Comment ``ivi-shell.so`` out
+
 #. Check the name of output is ``HDMI-A-2``
 
-After that, there are still some steps need to do to launch weston in AGL
+After that, there are still some steps need to do to launch weston in AGL:
 
 .. code-block:: none
    
