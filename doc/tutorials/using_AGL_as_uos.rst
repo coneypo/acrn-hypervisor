@@ -53,12 +53,20 @@ Steps for using AGL as the UOS
     
    .. code-block:: none 
    
-      -s 3,virtio-blk,/root/agl-demo-platform-crosssdk-intel-corei7-64-20180726071132.rootfs.wic \
+      -s 3,virtio-blk,/root/agl-demo-platform-crosssdk-intel-corei7-64.wic \
+      -k /usr/lib/kernel/default-iot-lts2018 \
       -B "root=/dev/vda2 
      
+   .. note::
+      In case you have downloaded a different AGL image than the one above
+      (``clear-26200-kvm.img.xz``), you will need to modify the AGL file name
+      and  above (the ``-s 3,virtio-blk`` argument) to match
+      what you have downloaded above. Likewise, you may need to adjust the kernel file
+      name to ``default-iot-lts2018``.
+      
 #. Start the User OS (UOS)
 
-   You are now all set to start the User OS (UOS)
+   You are now all set to start the User OS (UOS).
     
    .. code-block:: none   
 
@@ -67,23 +75,9 @@ Steps for using AGL as the UOS
    **Congratulations**, you are now watching the User OS booting up!
 
    And you should be able to see the console of AGL:
-  
-   .. code-block:: none
-      ...
-      [  OK  ] Found device /dev/ttyS1.
-      [  OK  ] Started Serial Getty on ttyS1.
-      [  OK  ] Started Hostname Service.
-      [  OK  ] Started Modem Manager.
-      [  OK  ] Found device /dev/hvc0.
-      [  OK  ] Started Serial Getty on hvc0.
-      [  OK  ] Reached target Login Prompts.
-      [  OK  ] Reached target Multi-User System.
-               Starting Update UTMP about System Runlevel Changes...
-      [  OK  ] Started Update UTMP about System Runlevel Changes.
-   
-      Automotive Grade Linux 5.1.0 intel-corei7-64 ttyS0 
-   
-      intel-corei7-64 login:
+
+   .. image:: images/The-console-of-AGL.png
+      :align: center
      
    When you see the output of the console above, that means AGL has been loaded 
    and now you could operate on the console. 
@@ -95,20 +89,30 @@ But following the setup steps before, you will get black screen in AGL.
 Please don't worry about it, and we will give the solutions to the black screen issue in AGL.
 
 By debugging, we identified the problem as an issue of ``ivi-shell.so`` library, it seems that 
-this library is not well supported. We can light the screen and get the GUI of Weston after 
-modifying ``weston.ini``, which is the configuration file of Weston.
+this library is not well supported. But we can light the screen with the GUI of weston like figure below.
 
 .. image:: images/The-GUI-of-weston.png
    :align: center
-
-The changes of ``weston.ini``:
-1. 	Comment ``ivi-shell.so`` out
-2. 	Check the name of output is ``HDMI-A-2``
+   
+To enable weston in AGL, We need to modify ``weston.ini``, which is the configuration file of weston.
 
 .. code-block:: none
-   ...
-   $ vim /etc/xdg/weston/weston.ini
    
+   vim /etc/xdg/weston/weston.ini
+   
+The changes of ``weston.ini``:
+#. Comment ``ivi-shell.so`` out
+#. Check the name of output is ``HDMI-A-2``
+
+After that, there are still some steps need to do to launch weston in AGL
+
+.. code-block:: none
+   
+   systemctl stop weston
+   export XDG_RUNTIME_DIR=/run/platform/display
+   weston --tty=1 -i 0 &
+
+
 Follow up
 *********
 ACRN Hypervisor is trying to support more kinds of operating systems all the time, 
