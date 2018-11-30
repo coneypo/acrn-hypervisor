@@ -9,6 +9,7 @@ We hope the steps documented in this article could help us to reproduce the
 problem much easier and provide some information for further debugging.
 
 .. image:: images/The-overview-of-AGL-as-UOS.png
+   
    :align: center
 
 Introduction of AGL
@@ -34,7 +35,7 @@ Steps for using AGL as the UOS
 #. Prepare the Service OS (SOS)
 
    Follow the instructions found in the Getting started guide for Intel NUC 
-   to setup SOS : `getting-started-apl-nuc <https://projectacrn.github.io/latest/getting-started/apl-nuc.html>`_
+   to setup SOS: ref:`getting-started-apl-nuc`.
 
 #. Prepare the User OS (UOS)
 
@@ -44,9 +45,9 @@ Steps for using AGL as the UOS
 
    .. code-block: none
    
-   cd ~
-   wget https://download.automotivelinux.org/AGL/release/eel/5.1.0/intel-corei7-64/deploy/images/intel-corei7-64/agl-demo-platform-crosssdk-intel-corei7-64.wic.xz
-   unxz agl-demo-platform-crosssdk-intel-corei7-64.wic.xz
+      cd ~
+      wget https://download.automotivelinux.org/AGL/release/eel/5.1.0/intel-corei7-64/deploy/images/intel-corei7-64/agl-demo-platform-crosssdk-intel-corei7-64.wic.xz
+      unxz agl-demo-platform-crosssdk-intel-corei7-64.wic.xz
         
    You need to adjust the ``/usr/share/acrn/samples/nuc/launch_uos.sh`` script to match your installation.
    These are the couple of lines you need to modify:
@@ -77,6 +78,7 @@ Steps for using AGL as the UOS
    And you should be able to see the console of AGL:
 
    .. image:: images/The-console-of-AGL.png
+      
       :align: center
      
    When you see the output of the console above, that means AGL has been loaded 
@@ -92,6 +94,7 @@ By debugging, we identified the problem as an issue of ``ivi-shell.so`` library,
 this library is not well supported. But we can light the screen with the GUI of weston like figure below.
 
 .. image:: images/The-GUI-of-weston.png
+   
    :align: center
    
 To enable weston in AGL, We need to modify ``weston.ini``, which is the configuration file of weston.
