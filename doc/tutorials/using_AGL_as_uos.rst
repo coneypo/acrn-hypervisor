@@ -25,75 +25,74 @@ Steps for using AGL as the UOS
 
 #. Hardware preparation
 
-The regulatory model of NUC we used is `NUC6CAYH 
-<https://www.intel.com/content/www/us/en/products/boards-kits/nuc/kits/nuc6cayh.html>`_
-and this NUC has two display ports: 1x HDMI, 1x VGA;
-    
-So we need to prepare 2 displays, one for SOS and one for UOS, 
-and connect these 2 displays to NUC.
+   The regulatory model of NUC we used is `NUC6CAYH 
+   <https://www.intel.com/content/www/us/en/products/boards-kits/nuc/kits/nuc6cayh.html>`_
+   and this NUC has two display ports: 1x HDMI, 1x VGA;    
+   So we need to prepare 2 displays, one for SOS and one for UOS, 
+   and connect these 2 displays to NUC.
 
 #. Prepare the Service OS (SOS)
 
-Follow the instructions found in the Getting started guide for Intel NUC 
-to setup SOS : `getting-started-apl-nuc <https://projectacrn.github.io/latest/getting-started/apl-nuc.html>`_
+   Follow the instructions found in the Getting started guide for Intel NUC 
+   to setup SOS : `getting-started-apl-nuc <https://projectacrn.github.io/latest/getting-started/apl-nuc.html>`_
 
 #. Prepare the User OS (UOS)
 
-The latest image of AGL release from this area:
-`agl-demo-platform-crosssdk-intel-corei7-64.wic.xz <https://download.automotivelinux.org/AGL/release/eel/5.1.0/intel-corei7-64/deploy/images/intel-corei7-64/agl-demo-platform-crosssdk-intel-corei7-64.wic.xz>`_
-Here we use version “eel_5.1.0”, and you can try other release of AGL in ACRN.
-    
-.. code-block: none
+   The latest image of AGL release from this area:
+   `agl-demo-platform-crosssdk-intel-corei7-64.wic.xz <https://download.automotivelinux.org/AGL/release/eel/5.1.0/intel-corei7-64/deploy/images/intel-corei7-64/agl-demo-platform-crosssdk-intel-corei7-64.wic.xz>`_
+   Here we use version “eel_5.1.0”, and you can try other release of AGL in ACRN.
+
+   .. code-block: none
    
    cd ~
    wget https://download.automotivelinux.org/AGL/release/eel/5.1.0/intel-corei7-64/deploy/images/intel-corei7-64/agl-demo-platform-crosssdk-intel-corei7-64.wic.xz
    unxz agl-demo-platform-crosssdk-intel-corei7-64.wic.xz
         
-You need to adjust the ``/usr/share/acrn/samples/nuc/launch_uos.sh`` script to match your installation.
-These are the couple of lines you need to modify:
+   You need to adjust the ``/usr/share/acrn/samples/nuc/launch_uos.sh`` script to match your installation.
+   These are the couple of lines you need to modify:
     
-.. code-block:: none 
+   .. code-block:: none 
    
-   -s 3,virtio-blk,/root/agl-demo-platform-crosssdk-intel-corei7-64-20180726071132.rootfs.wic \
-   -B "root=/dev/vda2 
+      -s 3,virtio-blk,/root/agl-demo-platform-crosssdk-intel-corei7-64-20180726071132.rootfs.wic \
+      -B "root=/dev/vda2 
      
 #. Start the User OS (UOS)
 
-You are now all set to start the User OS (UOS)
+   You are now all set to start the User OS (UOS)
     
-.. code-block:: none   
+   .. code-block:: none   
 
-   sudo /usr/share/acrn/samples/nuc/launch_uos.sh
+      sudo /usr/share/acrn/samples/nuc/launch_uos.sh
        
-**Congratulations**, you are now watching the User OS booting up!
+   **Congratulations**, you are now watching the User OS booting up!
 
-And you should be able to see the console of AGL:
+   And you should be able to see the console of AGL:
   
-.. code-block:: none
-   ...
-   [  OK  ] Found device /dev/ttyS1.
-   [  OK  ] Started Serial Getty on ttyS1.
-   [  OK  ] Started Hostname Service.
-   [  OK  ] Started Modem Manager.
-   [  OK  ] Found device /dev/hvc0.
-   [  OK  ] Started Serial Getty on hvc0.
-   [  OK  ] Reached target Login Prompts.
-   [  OK  ] Reached target Multi-User System.
-            Starting Update UTMP about System Runlevel Changes...
-   [  OK  ] Started Update UTMP about System Runlevel Changes.
+   .. code-block:: none
+      ...
+      [  OK  ] Found device /dev/ttyS1.
+      [  OK  ] Started Serial Getty on ttyS1.
+      [  OK  ] Started Hostname Service.
+      [  OK  ] Started Modem Manager.
+      [  OK  ] Found device /dev/hvc0.
+      [  OK  ] Started Serial Getty on hvc0.
+      [  OK  ] Reached target Login Prompts.
+      [  OK  ] Reached target Multi-User System.
+               Starting Update UTMP about System Runlevel Changes...
+      [  OK  ] Started Update UTMP about System Runlevel Changes.
    
-   Automotive Grade Linux 5.1.0 intel-corei7-64 ttyS0 
+      Automotive Grade Linux 5.1.0 intel-corei7-64 ttyS0 
    
-   intel-corei7-64 login:
+      intel-corei7-64 login:
      
-When you see the output of the console above, that means AGL has been loaded 
-and now you could operate on the console. 
+   When you see the output of the console above, that means AGL has been loaded 
+   and now you could operate on the console. 
 
 Enable the display of AGL
 *************************
 
 But following the setup steps before, you will get black screen in AGL. 
-Please don’t worry about it, and we will give the solutions to the black screen issue in AGL.
+Please don't worry about it, and we will give the solutions to the black screen issue in AGL.
 
 By debugging, we identified the problem as an issue of ``ivi-shell.so`` library, it seems that 
 this library is not well supported. We can light the screen and get the GUI of Weston after 
