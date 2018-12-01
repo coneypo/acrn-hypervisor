@@ -37,11 +37,11 @@ Steps for using AGL as the UOS
    to setup SOS: ref:`getting-started-apl-nuc`.
 
 #. Prepare the User OS (UOS)
-
-   Download AGL's image of ``eel_5.1.0`` release from:
-   `agl-demo-platform-crosssdk-intel-corei7-64.wic.xz <https://download.automotivelinux.org/AGL/release/eel/5.1.0/intel-corei7-64/deploy/images/intel-corei7-64/agl-demo-platform-crosssdk-intel-corei7-64.wic.xz>`_
-   Here we use version ``eel_5.1.0``, and you can try other release of AGL in ACRN.
-
+   You can download the release of AGL from https://download.automotivelinux.org/AGL/release/eel/, 
+   and we will use ``eel_5.1.0`` release for example. Please download the image of AGL: 
+   `agl-demo-platform-crosssdk-intel-corei7-64.wic.xz
+   <https://download.automotivelinux.org/AGL/release/eel/5.1.0/intel-corei7-64/deploy/images/intel-corei7-64/agl-demo-platform-crosssdk-intel-corei7-64.wic.xz>`_
+   
    .. code-block: none
    
       cd ~
