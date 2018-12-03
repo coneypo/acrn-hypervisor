@@ -27,14 +27,14 @@ Steps for using AGL as the UOS
 
    The regulatory model of NUC we used is `NUC6CAYH 
    <https://www.intel.com/content/www/us/en/products/boards-kits/nuc/kits/nuc6cayh.html>`_
-   and this NUC has two display ports: 1x HDMI, 1x VGA;    
-   So we need to prepare 2 displays, one for SOS and one for UOS, 
-   and connect these 2 displays to NUC.
+   and this kind of NUC has two display ports: 1x HDMI and 1x VGA.
+   So two displays needed for NUC, one for SOS and one for UOS, 
+   and connect these two displays to NUC.
 
 #. Prepare the Service OS (SOS)
 
    Follow the instructions found in the Getting started guide for Intel NUC 
-   to setup SOS: ref:`getting-started-apl-nuc`.
+   to setup SOS:ref:`getting-started-apl-nuc`.
 
 #. Prepare the User OS (UOS)
    Download the release of AGL from https://download.automotivelinux.org/AGL/release/eel/, 
