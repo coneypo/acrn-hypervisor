@@ -110,10 +110,9 @@ After that, there are still some steps need to do to launch weston in AGL:
 
 .. code-block:: none
    
-   systemctl stop weston
-   export XDG_RUNTIME_DIR=/run/platform/display
-   weston --tty=1 -i 0 &
+   systemctl restart weston
 
+And you will be able to see the GUI of weston in AGL.
 
 Follow up
 *********
