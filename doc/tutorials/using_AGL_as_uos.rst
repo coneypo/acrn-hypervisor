@@ -39,9 +39,6 @@ Steps for using AGL as the UOS
 
    Download the release of AGL from https://download.automotivelinux.org/AGL/release/eel/, 
    and we will use ``eel_5.1.0`` release for example. 
-   The AGL's image of ``eel_5.1.0`` can be downloaded from: 
-   `agl-demo-platform-crosssdk-intel-corei7-64.wic.xz
-   <https://download.automotivelinux.org/AGL/release/eel/5.1.0/intel-corei7-64/deploy/images/intel-corei7-64/agl-demo-platform-crosssdk-intel-corei7-64.wic.xz>`_
    
    .. code-block: none
    
