@@ -33,7 +33,7 @@ Steps for using AGL as the UOS
 #. Prepare the Service OS (SOS)
 
    Follow the instructions found in the Getting started guide for Intel NUC 
-   to setup SOS:ref:`getting-started-apl-nuc`.
+   to setup SOS :ref:`getting-started-apl-nuc`.
 
 #. Prepare the User OS (UOS)
 
