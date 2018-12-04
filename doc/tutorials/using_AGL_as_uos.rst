@@ -16,9 +16,8 @@ Introduction of AGL
 
 Automotive Grade Linux (AGL) is an open source project of The Linux Foundation 
 that is building a Linux-based, open software platform for automotive application.
-
 For more information about AGL, please visit AGL’s official website:
-https://www.automotivelinux.org/
+https://www.automotivelinux.org/.
 
 Steps for using AGL as the UOS
 ******************************
@@ -37,8 +36,10 @@ Steps for using AGL as the UOS
    to setup SOS:ref:`getting-started-apl-nuc`.
 
 #. Prepare the User OS (UOS)
+
    Download the release of AGL from https://download.automotivelinux.org/AGL/release/eel/, 
-   and we will use ``eel_5.1.0`` release for example. Please download the image of AGL: 
+   and we will use ``eel_5.1.0`` release for example. 
+   The AGL's image of ``eel_5.1.0`` can be downloaded from: 
    `agl-demo-platform-crosssdk-intel-corei7-64.wic.xz
    <https://download.automotivelinux.org/AGL/release/eel/5.1.0/intel-corei7-64/deploy/images/intel-corei7-64/agl-demo-platform-crosssdk-intel-corei7-64.wic.xz>`_
    
@@ -47,6 +48,7 @@ Steps for using AGL as the UOS
       cd ~
       wget https://download.automotivelinux.org/AGL/release/eel/5.1.0/intel-corei7-64/deploy/images/intel-corei7-64/agl-demo-platform-crosssdk-intel-corei7-64.wic.xz
       unxz agl-demo-platform-crosssdk-intel-corei7-64.wic.xz
+        
         
    You need to adjust the ``/usr/share/acrn/samples/nuc/launch_uos.sh`` script to match your installation.
    These are the couple of lines you need to modify:
@@ -87,7 +89,6 @@ Enable the display of AGL
 
 But following the setup steps before, you will get black screen in AGL. 
 Please don't worry about it, and we will give the solutions to the black screen issue in AGL.
-
 By debugging, we identified the problem as an issue of ``ivi-shell.so`` library, it seems that 
 this library is not well supported. But we can light the screen with the GUI of weston like figure below.
 
