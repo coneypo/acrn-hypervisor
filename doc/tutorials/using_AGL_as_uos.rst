@@ -38,9 +38,9 @@ Steps for using AGL as the UOS
 #. Prepare the User OS (UOS)
 
    Download the release of AGL from https://download.automotivelinux.org/AGL/release/eel/, 
-   and we will use ``eel_5.1.0`` release for example. 
-   
-   .. code-block: none
+   and we will use ``eel_5.1.0`` release for example.
+    
+   .. code-block:: none 
    
       cd ~
       wget https://download.automotivelinux.org/AGL/release/eel/5.1.0/intel-corei7-64/deploy/images/intel-corei7-64/agl-demo-platform-crosssdk-intel-corei7-64.wic.xz
