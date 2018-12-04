@@ -57,11 +57,10 @@ Steps for using AGL as the UOS
       -B "root=/dev/vda2 
      
    .. note::
-      In case you have downloaded a different AGL image than the one above
-      (``clear-26200-kvm.img.xz``), you will need to modify the AGL file name
-      and  above (the ``-s 3,virtio-blk`` argument) to match
-      what you have downloaded above. Likewise, you may need to adjust the kernel file
-      name to ``default-iot-lts2018``.
+      In case you have downloaded a different AGL image or store the image in other directory, 
+      you will need to modify the AGL file name or directory (the ``-s 3,virtio-blk`` argument) 
+      to match what you have downloaded above. 
+      Likewise, you may need to adjust the kernel file name to ``default-iot-lts2018``.
       
 #. Start the User OS (UOS)
 
