@@ -3,8 +3,8 @@
 Using AGL as the User OS
 ########################
 
-This tutorial describes the steps to run AGL as the User OS on ACRN hypervisor 
-and the problems we got at current stage. 
+This tutorial describes the steps to run Automotive Grade Linux (AGL) 
+as the User OS on ACRN hypervisor and the problems we got at current stage. 
 We hope the steps documented in this article could help us to reproduce the 
 problem much easier and provide some information for further debugging.
 
