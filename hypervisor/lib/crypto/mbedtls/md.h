@@ -29,6 +29,7 @@
 #define MBEDTLS_MD_H
 
 #include <rtl.h>
+#include "sha256.h"
 #define MBEDTLS_ERR_MD_FEATURE_UNAVAILABLE                -0x5080  /**< The selected feature is not available. */
 #define MBEDTLS_ERR_MD_BAD_INPUT_DATA                     -0x5100  /**< Bad input parameters to function. */
 #define MBEDTLS_ERR_MD_ALLOC_FAILED                       -0x5180  /**< Failed to allocate memory. */
@@ -36,8 +37,6 @@
 #define MBEDTLS_ERR_MD_HW_ACCEL_FAILED                    -0x5280  /**< MD hardware accelerator failed. */
 
 #define mbedtls_platform_zeroize(buf, len) memset(buf, 0, len)
-#define mbedtls_calloc    calloc
-#define mbedtls_free      free
 
 /**
  * \brief     Supported message digests.
@@ -63,10 +62,13 @@ typedef struct {
     const mbedtls_md_info_t *md_info;
 
     /** The digest-specific context. */
-    void *md_ctx;
+    uint8_t md_ctx[sizeof( mbedtls_sha256_context )];
 
-    /** The HMAC part of the context. */
-    void *hmac_ctx;
+    /** The HMAC part of the context. Use array here to avoid dynamic memory
+     *  allocation. The hardcode value 128 is 2 times of block_size which
+     *  is 64 in md_wrap.c
+     */
+    uint8_t hmac_ctx[128];
 } mbedtls_md_context_t;
 
 /**
@@ -78,7 +80,7 @@ typedef struct {
  *                  message-digest enumeration #mbedtls_md_type_t.
  *                  The last entry is 0.
  */
-const int *mbedtls_md_list( void );
+const int32_t *mbedtls_md_list( void );
 
 /**
  * \brief           This function returns the message-digest information
@@ -127,15 +129,13 @@ void mbedtls_md_free( mbedtls_md_context_t *ctx );
  * \param ctx       The context to set up.
  * \param md_info   The information structure of the message-digest algorithm
  *                  to use.
- * \param hmac      Defines if HMAC is used. 0: HMAC is not used (saves some memory),
- *                  or non-zero: HMAC is used with this context.
  *
  * \return          \c 0 on success.
  * \return          #MBEDTLS_ERR_MD_BAD_INPUT_DATA on parameter-verification
  *                  failure.
  * \return          #MBEDTLS_ERR_MD_ALLOC_FAILED on memory-allocation failure.
  */
-int mbedtls_md_setup( mbedtls_md_context_t *ctx, const mbedtls_md_info_t *md_info, int hmac );
+int32_t mbedtls_md_setup( mbedtls_md_context_t *ctx, const mbedtls_md_info_t *md_info );
 
 /**
  * \brief           This function clones the state of an message-digest
@@ -156,7 +156,7 @@ int mbedtls_md_setup( mbedtls_md_context_t *ctx, const mbedtls_md_info_t *md_inf
  * \return          \c 0 on success.
  * \return          #MBEDTLS_ERR_MD_BAD_INPUT_DATA on parameter-verification failure.
  */
-int mbedtls_md_clone( mbedtls_md_context_t *dst,
+int32_t mbedtls_md_clone( mbedtls_md_context_t *dst,
                       const mbedtls_md_context_t *src );
 
 /**
@@ -168,7 +168,7 @@ int mbedtls_md_clone( mbedtls_md_context_t *dst,
  *
  * \return          The size of the message-digest output in Bytes.
  */
-unsigned char mbedtls_md_get_size( const mbedtls_md_info_t *md_info );
+uint8_t mbedtls_md_get_size( const mbedtls_md_info_t *md_info );
 
 /**
  * \brief           This function extracts the message-digest type from the
@@ -194,7 +194,7 @@ mbedtls_md_type_t mbedtls_md_get_type( const mbedtls_md_info_t *md_info );
  * \return          #MBEDTLS_ERR_MD_BAD_INPUT_DATA on parameter-verification
  *                  failure.
  */
-int mbedtls_md_starts( mbedtls_md_context_t *ctx );
+int32_t mbedtls_md_starts( mbedtls_md_context_t *ctx );
 
 /**
  * \brief           This function feeds an input buffer into an ongoing
@@ -212,7 +212,7 @@ int mbedtls_md_starts( mbedtls_md_context_t *ctx );
  * \return          #MBEDTLS_ERR_MD_BAD_INPUT_DATA on parameter-verification
  *                  failure.
  */
-int mbedtls_md_update( mbedtls_md_context_t *ctx, const unsigned char *input, size_t ilen );
+int32_t mbedtls_md_update( mbedtls_md_context_t *ctx, const uint8_t *input, size_t ilen );
 
 /**
  * \brief           This function finishes the digest operation,
@@ -232,7 +232,7 @@ int mbedtls_md_update( mbedtls_md_context_t *ctx, const unsigned char *input, si
  * \return          #MBEDTLS_ERR_MD_BAD_INPUT_DATA on parameter-verification
  *                  failure.
  */
-int mbedtls_md_finish( mbedtls_md_context_t *ctx, unsigned char *output );
+int32_t mbedtls_md_finish( mbedtls_md_context_t *ctx, uint8_t *output );
 
 /**
  * \brief          This function calculates the message-digest of a buffer,
@@ -252,8 +252,8 @@ int mbedtls_md_finish( mbedtls_md_context_t *ctx, unsigned char *output );
  * \return         #MBEDTLS_ERR_MD_BAD_INPUT_DATA on parameter-verification
  *                 failure.
  */
-int mbedtls_md( const mbedtls_md_info_t *md_info, const unsigned char *input, size_t ilen,
-        unsigned char *output );
+int32_t mbedtls_md( const mbedtls_md_info_t *md_info, const uint8_t *input, size_t ilen,
+        uint8_t *output );
 
 /**
  * \brief           This function sets the HMAC key and prepares to
@@ -273,7 +273,7 @@ int mbedtls_md( const mbedtls_md_info_t *md_info, const unsigned char *input, si
  * \return          #MBEDTLS_ERR_MD_BAD_INPUT_DATA on parameter-verification
  *                  failure.
  */
-int mbedtls_md_hmac_starts( mbedtls_md_context_t *ctx, const unsigned char *key,
+int32_t mbedtls_md_hmac_starts( mbedtls_md_context_t *ctx, const uint8_t *key,
                     size_t keylen );
 
 /**
@@ -295,7 +295,7 @@ int mbedtls_md_hmac_starts( mbedtls_md_context_t *ctx, const unsigned char *key,
  * \return          #MBEDTLS_ERR_MD_BAD_INPUT_DATA on parameter-verification
  *                  failure.
  */
-int mbedtls_md_hmac_update( mbedtls_md_context_t *ctx, const unsigned char *input,
+int32_t mbedtls_md_hmac_update( mbedtls_md_context_t *ctx, const uint8_t *input,
                     size_t ilen );
 
 /**
@@ -316,7 +316,7 @@ int mbedtls_md_hmac_update( mbedtls_md_context_t *ctx, const unsigned char *inpu
  * \return          #MBEDTLS_ERR_MD_BAD_INPUT_DATA on parameter-verification
  *                  failure.
  */
-int mbedtls_md_hmac_finish( mbedtls_md_context_t *ctx, unsigned char *output);
+int32_t mbedtls_md_hmac_finish( mbedtls_md_context_t *ctx, uint8_t *output);
 
 /**
  * \brief           This function prepares to authenticate a new message with
@@ -333,7 +333,7 @@ int mbedtls_md_hmac_finish( mbedtls_md_context_t *ctx, unsigned char *output);
  * \return          #MBEDTLS_ERR_MD_BAD_INPUT_DATA on parameter-verification
  *                  failure.
  */
-int mbedtls_md_hmac_reset( mbedtls_md_context_t *ctx );
+int32_t mbedtls_md_hmac_reset( mbedtls_md_context_t *ctx );
 
 /**
  * \brief          This function calculates the full generic HMAC
@@ -357,11 +357,11 @@ int mbedtls_md_hmac_reset( mbedtls_md_context_t *ctx );
  * \return         #MBEDTLS_ERR_MD_BAD_INPUT_DATA on parameter-verification
  *                 failure.
  */
-int mbedtls_md_hmac( const mbedtls_md_info_t *md_info, const unsigned char *key, size_t keylen,
-                const unsigned char *input, size_t ilen,
-                unsigned char *output );
+int32_t mbedtls_md_hmac( const mbedtls_md_info_t *md_info, const uint8_t *key, size_t keylen,
+                const uint8_t *input, size_t ilen,
+                uint8_t *output );
 
 /* Internal use */
-int mbedtls_md_process( mbedtls_md_context_t *ctx, const unsigned char *data );
+int32_t mbedtls_md_process( mbedtls_md_context_t *ctx, const uint8_t *data );
 
 #endif /* MBEDTLS_MD_H */

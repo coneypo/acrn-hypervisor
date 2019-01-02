@@ -123,8 +123,8 @@ void enable_disable_pci_intx(union pci_bdf bdf, bool enable)
 void pci_scan_bus(pci_enumeration_cb cb_func, void *cb_data)
 {
 	union pci_bdf pbdf;
-	uint8_t hdr_type, secondary_bus;
-	uint32_t bus, dev, func, val;
+	uint8_t hdr_type, secondary_bus, dev, func;
+	uint32_t bus, val;
 	uint8_t bus_to_scan[PCI_BUSMAX + 1] = { BUS_SCAN_SKIP };
 
 	/* start from bus 0 */
@@ -136,7 +136,7 @@ void pci_scan_bus(pci_enumeration_cb cb_func, void *cb_data)
 		}
 
 		bus_to_scan[bus] = BUS_SCAN_COMPLETE;
-		pbdf.bits.b = bus;
+		pbdf.bits.b = (uint8_t)bus;
 
 		for (dev = 0U; dev <= PCI_SLOTMAX; dev++) {
 			pbdf.bits.d = dev;
@@ -152,6 +152,12 @@ void pci_scan_bus(pci_enumeration_cb cb_func, void *cb_data)
 					}
 
 					/* continue scan next function */
+					continue;
+				}
+
+				/* if it is debug uart, hide it from SOS */
+				if (is_pci_dbg_uart(pbdf)) {
+					pr_info("hide pci uart dev: (%x:%x:%x)", pbdf.bits.b, pbdf.bits.d, pbdf.bits.f);
 					continue;
 				}
 

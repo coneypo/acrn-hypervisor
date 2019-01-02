@@ -40,7 +40,7 @@
  * Queue definitions.
  * Audio mediator uses two queues: one for interrupt and the other for messages.
  */
-#define VIRTIO_AUDIO_VQ_NUM  2
+#define VIRTIO_AUDIO_VQ_NUM  4 /*4 currently we use 4 vq, may change later*/
 
 const char *vbs_k_audio_dev_path = "/dev/vbs_k_audio";
 
@@ -80,7 +80,7 @@ static void virtio_audio_reset(void *base);
 
 static struct virtio_ops virtio_audio_ops_k = {
 	"virtio_audio",		/* our name */
-	VIRTIO_AUDIO_VQ_NUM,	/* we support 2 virtqueue */
+	VIRTIO_AUDIO_VQ_NUM,	/* we support 4 virtqueue */
 	0,			/* config reg size */
 	virtio_audio_reset,	/* reset */
 	virtio_audio_k_no_notify,	/* device-wide qnotify */
@@ -224,7 +224,7 @@ virtio_audio_k_set_status(void *base, uint64_t status)
 	nvq = virt_audio->base.vops->nvq;
 
 	if (virt_audio->vbs_k.kstatus == VIRTIO_DEV_INIT_SUCCESS &&
-	    (status & VIRTIO_CR_STATUS_DRIVER_OK)) {
+	    (status & VIRTIO_CONFIG_S_DRIVER_OK)) {
 		/* time to kickoff VBS-K side */
 		/* init vdev first */
 		rc = virtio_audio_kernel_dev_set(
@@ -316,7 +316,8 @@ virtio_audio_init(struct vmctx *ctx, struct pci_vdev *dev, char *opts)
 		      &virtio_audio_ops_k,
 		      virt_audio,
 		      dev,
-		      virt_audio->vq);
+		      virt_audio->vq,
+		      BACKEND_VBSK);
 
 	rc = virtio_audio_kernel_init(virt_audio);
 	if (rc < 0) {
@@ -331,14 +332,16 @@ virtio_audio_init(struct vmctx *ctx, struct pci_vdev *dev, char *opts)
 	/* vq[0] and vq[1] are for interrupt and messages */
 	virt_audio->vq[0].qsize = VIRTIO_AUDIO_RINGSZ;
 	virt_audio->vq[1].qsize = VIRTIO_AUDIO_RINGSZ;
+	virt_audio->vq[2].qsize = VIRTIO_AUDIO_RINGSZ;
+	virt_audio->vq[3].qsize = VIRTIO_AUDIO_RINGSZ;
 
 	/* initialize config space */
 	pci_set_cfgdata16(dev, PCIR_DEVICE, VIRTIO_DEV_AUDIO);
-	pci_set_cfgdata16(dev, PCIR_VENDOR, VIRTIO_VENDOR);
+	pci_set_cfgdata16(dev, PCIR_VENDOR, INTEL_VENDOR_ID);
 	pci_set_cfgdata8(dev, PCIR_CLASS, PCIC_MULTIMEDIA);
 	pci_set_cfgdata8(dev, PCIR_SUBCLASS, PCIS_MULTIMEDIA_AUDIO);
 	pci_set_cfgdata16(dev, PCIR_SUBDEV_0, VIRTIO_TYPE_AUDIO);
-	pci_set_cfgdata16(dev, PCIR_SUBVEND_0, VIRTIO_VENDOR);
+	pci_set_cfgdata16(dev, PCIR_SUBVEND_0, INTEL_VENDOR_ID);
 
 	if (virtio_interrupt_init(&virt_audio->base, virtio_uses_msix())) {
 		free(virt_audio);

@@ -38,14 +38,6 @@
 #ifndef CPU_H
 #define CPU_H
 
-/* Define page size */
-#define CPU_PAGE_SHIFT          12U
-#define CPU_PAGE_SIZE           0x1000U
-#define CPU_PAGE_MASK           0xFFFFFFFFFFFFF000UL
-
-#define MMU_PTE_PAGE_SHIFT	CPU_PAGE_SHIFT
-#define MMU_PDE_PAGE_SHIFT	21U
-
 /* Define CPU stack alignment */
 #define CPU_STACK_ALIGN         16UL
 
@@ -135,18 +127,6 @@
 /* Boot CPU ID */
 #define BOOT_CPU_ID             0U
 
-/* hypervisor stack bottom magic('intl') */
-#define SP_BOTTOM_MAGIC    0x696e746cUL
-
-/* type of speculation control
- * 0 - no speculation control support
- * 1 - raw IBRS + IPBP support
- * 2 - with STIBP optimization support
- */
-#define IBRS_NONE	0
-#define IBRS_RAW	1
-#define IBRS_OPT	2
-
 #ifndef ASSEMBLER
 
 #define	BUS_LOCK	"lock ; "
@@ -218,9 +198,7 @@ extern uint8_t		ld_bss_end;
 
 /* In trampoline range, hold the jump target which trampline will jump to */
 extern uint64_t               main_entry[1];
-
-extern int ibrs_type;
-extern spinlock_t trampoline_spinlock;
+extern uint64_t               secondary_cpu_stack[1];
 
 /*
  * To support per_cpu access, we use a special struct "per_cpu_region" to hold
@@ -240,16 +218,6 @@ extern spinlock_t trampoline_spinlock;
  * to locate the per cpu data.
  */
 
-/* CPUID feature words */
-#define	FEAT_1_ECX		0U     /* CPUID[1].ECX */
-#define	FEAT_1_EDX		1U     /* CPUID[1].EDX */
-#define	FEAT_7_0_EBX		2U     /* CPUID[EAX=7,ECX=0].EBX */
-#define	FEAT_7_0_ECX		3U     /* CPUID[EAX=7,ECX=0].ECX */
-#define	FEAT_7_0_EDX		4U     /* CPUID[EAX=7,ECX=0].EDX */
-#define	FEAT_8000_0001_ECX	5U     /* CPUID[8000_0001].ECX */
-#define	FEAT_8000_0001_EDX	6U     /* CPUID[8000_0001].EDX */
-#define	FEAT_8000_0008_EBX	7U     /* CPUID[8000_0008].EAX */
-#define	FEATURE_WORDS		8U
 /**
  *The invalid cpu_id (INVALID_CPU_ID) is error
  *code for error handling, this means that
@@ -267,7 +235,7 @@ extern spinlock_t trampoline_spinlock;
 struct descriptor_table {
 	uint16_t limit;
 	uint64_t base;
-} __attribute__((packed));
+} __packed;
 
 /* CPU states defined */
 enum pcpu_boot_state {
@@ -278,58 +246,16 @@ enum pcpu_boot_state {
 	PCPU_STATE_DEAD,
 };
 
-struct cpu_state_info {
-	uint8_t			 px_cnt;	/* count of all Px states */
-	const struct cpu_px_data *px_data;
-	uint8_t			 cx_cnt;	/* count of all Cx entries */
-	const struct cpu_cx_data *cx_data;
-};
-
-struct cpuinfo_x86 {
-	uint8_t family, model;
-	uint8_t virt_bits;
-	uint8_t phys_bits;
-	uint32_t cpuid_level;
-	uint32_t extended_cpuid_level;
-	uint64_t physical_address_mask;
-	uint32_t cpuid_leaves[FEATURE_WORDS];
-	char model_name[64];
-	struct cpu_state_info state_info;
-};
-#ifdef STACK_PROTECTOR
-struct stack_canary {
-	/* Gcc generates extra code, using [fs:40] to access canary */
-	uint8_t reserved[40];
-	uint64_t canary;
-};
-void __stack_chk_fail(void);
-#endif
-
-extern struct cpuinfo_x86 boot_cpu_data;
-
-#define MAX_PSTATE	20U	/* max num of supported Px count */
-#define MAX_CSTATE	8U	/* max num of supported Cx count */
-
-/* We support MAX_CSTATE num of Cx, means have (MAX_CSTATE - 1) Cx entries,
- * i.e. supported Cx entry index range from 1 to MAX_CX_ENTRY.
- */
-#define MAX_CX_ENTRY	(MAX_CSTATE - 1U)
-
 /* Function prototypes */
 void cpu_do_idle(void);
-void cpu_dead(uint16_t pcpu_id);
+void cpu_dead(void);
 void trampoline_start16(void);
-bool is_apicv_intr_delivery_supported(void);
-bool is_apicv_posted_intr_supported(void);
-bool is_ept_supported(void);
-bool cpu_has_cap(uint32_t bit);
 void load_cpu_state_data(void);
-void bsp_boot_init(void);
-void cpu_secondary_init(void);
+void init_cpu_pre(uint16_t pcpu_id_args);
+void init_cpu_post(uint16_t pcpu_id);
 void start_cpus(void);
 void stop_cpus(void);
 void wait_sync_change(uint64_t *sync, uint64_t wake_sync);
-void cpu_l1d_flush(void);
 
 #define CPU_SEG_READ(seg, result_ptr)						\
 {										\
@@ -366,30 +292,26 @@ static inline uint64_t sidt(void)
 }
 
 /* Read MSR */
-static inline void cpu_msr_read(uint32_t reg, uint64_t *msr_val_ptr)
+static inline uint64_t cpu_msr_read(uint32_t reg)
 {
 	uint32_t  msrl, msrh;
 
 	asm volatile (" rdmsr ":"=a"(msrl), "=d"(msrh) : "c" (reg));
-	*msr_val_ptr = ((uint64_t)msrh << 32U) | msrl;
+	return (((uint64_t)msrh << 32U) | msrl);
 }
 
 /* Write MSR */
 static inline void cpu_msr_write(uint32_t reg, uint64_t msr_val)
 {
-	uint32_t msrl, msrh;
-
-	msrl = (uint32_t)msr_val;
-	msrh = (uint32_t)(msr_val >> 32U);
-	asm volatile (" wrmsr " : : "c" (reg), "a" (msrl), "d" (msrh));
+	asm volatile (" wrmsr " : : "c" (reg), "a" ((uint32_t)msr_val), "d" ((uint32_t)(msr_val >> 32U)));
 }
 
-static inline void pause_cpu(void)
+static inline void asm_pause(void)
 {
 	asm volatile ("pause" ::: "memory");
 }
 
-static inline void hlt_cpu(void)
+static inline void asm_hlt(void)
 {
 	asm volatile ("hlt");
 }
@@ -503,8 +425,7 @@ static inline uint64_t cpu_rsp_get(void)
 {
 	uint64_t ret;
 
-	asm volatile("movq %%rsp, %0"
-			:  "=r"(ret));
+	asm volatile("movq %%rsp, %0" :  "=r"(ret));
 	return ret;
 }
 
@@ -512,35 +433,38 @@ static inline uint64_t cpu_rbp_get(void)
 {
 	uint64_t ret;
 
-	asm volatile("movq %%rbp, %0"
-			:  "=r"(ret));
+	asm volatile("movq %%rbp, %0" :  "=r"(ret));
 	return ret;
 }
 
-static inline uint64_t
-msr_read(uint32_t reg_num)
+static inline uint64_t msr_read(uint32_t reg_num)
 {
-	uint64_t msr_val;
-
-	cpu_msr_read(reg_num, &msr_val);
-	return msr_val;
+	return cpu_msr_read(reg_num);
 }
 
-static inline void
-msr_write(uint32_t reg_num, uint64_t value64)
+static inline void msr_write(uint32_t reg_num, uint64_t value64)
 {
 	cpu_msr_write(reg_num, value64);
 }
 
-static inline void
-write_xcr(int reg, uint64_t val)
+static inline void write_xcr(int32_t reg, uint64_t val)
 {
-	uint32_t low, high;
-
-	low = (uint32_t)val;
-	high = (uint32_t)(val >> 32U);
-	asm volatile("xsetbv" : : "c" (reg), "a" (low), "d" (high));
+	asm volatile("xsetbv" : : "c" (reg), "a" ((uint32_t)val), "d" ((uint32_t)(val >> 32U)));
 }
+
+static inline void stac(void)
+{
+	asm volatile ("stac" : : : "memory");
+}
+
+static inline void clac(void)
+{
+	asm volatile ("clac" : : : "memory");
+}
+
+uint16_t get_pcpu_nums(void);
+bool is_pcpu_active(uint16_t pcpu_id);
+uint64_t get_active_pcpu_bitmap(void);
 #else /* ASSEMBLER defined */
 
 #endif /* ASSEMBLER defined */

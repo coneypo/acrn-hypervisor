@@ -8,14 +8,14 @@
 #define VMEXIT_H_
 
 struct vm_exit_dispatch {
-	int (*handler)(struct acrn_vcpu *);
+	int32_t (*handler)(struct acrn_vcpu *);
 	uint32_t need_exit_qualification;
 };
 
-int vmexit_handler(struct acrn_vcpu *vcpu);
-int vmcall_vmexit_handler(struct acrn_vcpu *vcpu);
-int cpuid_vmexit_handler(struct acrn_vcpu *vcpu);
-int cr_access_vmexit_handler(struct acrn_vcpu *vcpu);
+int32_t vmexit_handler(struct acrn_vcpu *vcpu);
+int32_t vmcall_vmexit_handler(struct acrn_vcpu *vcpu);
+int32_t cpuid_vmexit_handler(struct acrn_vcpu *vcpu);
+int32_t cr_access_vmexit_handler(struct acrn_vcpu *vcpu);
 extern void vm_exit(void);
 static inline uint64_t
 vm_exit_qualification_bit_mask(uint64_t exit_qual, uint32_t msb, uint32_t lsb)
@@ -83,9 +83,5 @@ static inline uint64_t vm_exit_io_instruction_port_number(uint64_t exit_qual)
 {
 	return (vm_exit_qualification_bit_mask(exit_qual, 31U, 16U) >> 16U);
 }
-
-#ifdef HV_DEBUG
-void get_vmexit_profile(char *str_arg, size_t str_max);
-#endif /* HV_DEBUG */
 
 #endif /* VMEXIT_H_ */

@@ -374,11 +374,24 @@ vmei_set_status(struct virtio_mei *vmei, enum vmei_status status)
 }
 
 static void
+vmei_rx_teardown(void *param)
+{
+	unsigned int i;
+	struct vmei_host_client *hclient = param;
+
+	if (hclient->client_fd > -1)
+		close(hclient->client_fd);
+	for (i = 0; i < VMEI_IOBUFS_MAX; i++)
+		free(hclient->send_bufs.bufs[i].iov_base);
+	free(hclient->recv_buf);
+	free(hclient);
+}
+
+static void
 vmei_host_client_destroy(const struct refcnt *ref)
 {
 	struct vmei_host_client *hclient;
 	struct vmei_me_client *mclient;
-	unsigned int i;
 
 	hclient = container_of(ref, struct vmei_host_client, ref);
 
@@ -390,12 +403,8 @@ vmei_host_client_destroy(const struct refcnt *ref)
 
 	if (hclient->rx_mevp)
 		mevent_delete(hclient->rx_mevp);
-	if (hclient->client_fd > -1)
-		close(hclient->client_fd);
-	for (i = 0; i < VMEI_IOBUFS_MAX; i++)
-		free(hclient->send_bufs.bufs[i].iov_base);
-	free(hclient->recv_buf);
-	free(hclient);
+	else
+		vmei_rx_teardown(hclient);
 }
 
 static struct vmei_host_client *
@@ -955,12 +964,23 @@ vmei_reset(void *vth)
 	virtio_reset_dev(&vmei->base);
 }
 
+static void
+vmei_reset_teardown(void *param)
+{
+	struct virtio_mei *vmei = param;
+	vmei->reset_mevp = NULL;
+
+	pthread_mutex_destroy(&vmei->mutex);
+	free(vmei->config);
+	free(vmei);
+}
+
 static void vmei_del_reset_event(struct virtio_mei *vmei)
 {
 	if (vmei->reset_mevp)
 		mevent_delete_close(vmei->reset_mevp);
-
-	vmei->reset_mevp = NULL;
+	else
+		vmei_reset_teardown(vmei);
 }
 
 static void vmei_rx_callback(int fd, enum ev_type type, void *param);
@@ -1017,7 +1037,7 @@ vmei_host_client_native_connect(struct vmei_host_client *hclient)
 
 	/* add READ event into mevent */
 	hclient->rx_mevp = mevent_add(hclient->client_fd, EVF_READ,
-				      vmei_rx_callback, hclient);
+			vmei_rx_callback, hclient, vmei_rx_teardown, hclient);
 	if (!hclient->rx_mevp)
 		return MEI_HBM_REJECTED;
 
@@ -1567,7 +1587,7 @@ vmei_notify_tx(void *data, struct virtio_vq_info *vq)
 
 	pthread_mutex_lock(&vmei->tx_mutex);
 	DPRINTF("TX: New OUT buffer available!\n");
-	vq->used->flags |= ACRN_VRING_USED_F_NO_NOTIFY;
+	vq->used->flags |= VRING_USED_F_NO_NOTIFY;
 	pthread_mutex_unlock(&vmei->tx_mutex);
 
 	while (vq_has_descs(vq))
@@ -1577,7 +1597,7 @@ vmei_notify_tx(void *data, struct virtio_vq_info *vq)
 
 	pthread_mutex_lock(&vmei->tx_mutex);
 	DPRINTF("TX: New OUT buffer available!\n");
-	vq->used->flags &= ~ACRN_VRING_USED_F_NO_NOTIFY;
+	vq_clear_used_ring_flags(&vmei->base, vq);
 	pthread_mutex_unlock(&vmei->tx_mutex);
 }
 
@@ -1870,7 +1890,7 @@ static void *vmei_rx_thread(void *param)
 	while (vmei->status != VMEI_STST_DEINIT) {
 		/* note - rx mutex is locked here */
 		while (vq_ring_ready(vq)) {
-			vq->used->flags &= ~ACRN_VRING_USED_F_NO_NOTIFY;
+			vq_clear_used_ring_flags(&vmei->base, vq);
 			mb();
 			if (vq_has_descs(vq) &&
 			    vmei->rx_need_sched &&
@@ -1883,7 +1903,7 @@ static void *vmei_rx_thread(void *param)
 			if (err || vmei->status == VMEI_STST_DEINIT)
 				goto out;
 		}
-		vq->used->flags |= ACRN_VRING_USED_F_NO_NOTIFY;
+		vq->used->flags |= VRING_USED_F_NO_NOTIFY;
 
 		do {
 			vmei->rx_need_sched = vmei_proc_rx(vmei, vq);
@@ -1910,7 +1930,7 @@ vmei_notify_rx(void *data, struct virtio_vq_info *vq)
 	/* Signal the rx thread for processing */
 	pthread_mutex_lock(&vmei->rx_mutex);
 	DPRINTF("RX: New IN buffer available!\n");
-	vq->used->flags |= ACRN_VRING_USED_F_NO_NOTIFY;
+	vq->used->flags |= VRING_USED_F_NO_NOTIFY;
 	pthread_cond_signal(&vmei->rx_cond);
 	pthread_mutex_unlock(&vmei->rx_mutex);
 }
@@ -1951,7 +1971,7 @@ vmei_start(struct virtio_mei *vmei, bool do_rescan)
 
 	hclient->client_fd = pipefd[0];
 	hclient->rx_mevp = mevent_add(hclient->client_fd, EVF_READ,
-				      vmei_rx_callback, hclient);
+		      vmei_rx_callback, hclient, vmei_rx_teardown, hclient);
 	vmei->hbm_fd = pipefd[1];
 
 	if (do_rescan) {
@@ -2051,7 +2071,7 @@ static int vmei_add_reset_event(struct virtio_mei *vmei)
 
 	vmei->dev_state_first = true;
 	vmei->reset_mevp = mevent_add(dev_state_fd, EVF_READ_ET,
-				      vmei_reset_callback, vmei);
+		vmei_reset_callback, vmei, vmei_reset_teardown, vmei);
 	if (!vmei->reset_mevp) {
 		close(dev_state_fd);
 		return -ENOMEM;
@@ -2166,7 +2186,7 @@ vmei_init(struct vmctx *ctx, struct pci_vdev *dev, char *opts)
 	int i, rc;
 	char *endptr = NULL;
 	char *opt;
-	unsigned int bus = 0, slot = 0, func = 0;
+	int bus = 0, slot = 0, func = 0;
 	char name[DEV_NAME_SIZE + 1];
 
 	vmei_debug = 0;
@@ -2175,7 +2195,7 @@ vmei_init(struct vmctx *ctx, struct pci_vdev *dev, char *opts)
 		goto init;
 
 	while ((opt = strsep(&opts, ",")) != NULL) {
-		if (sscanf(opt, "%x/%x/%x", &bus, &slot, &func) == 3)
+		if (parse_bdf(opt, &bus, &slot, &func, 16) == 0)
 			continue;
 		if (!strncmp(opt, "d", 1)) {
 			vmei_debug = strtoul(opt + 1, &endptr, 10);
@@ -2255,7 +2275,7 @@ init:
 		goto fail;
 	}
 
-	virtio_linkup(&vmei->base, &virtio_mei_ops, vmei, dev, vmei->vqs);
+	virtio_linkup(&vmei->base, &virtio_mei_ops, vmei, dev, vmei->vqs, BACKEND_VBSU);
 	vmei->base.mtx = &vmei->mutex;
 
 	for (i = 0; i < VMEI_VQ_NUM; i++)
@@ -2336,12 +2356,8 @@ vmei_deinit(struct vmctx *ctx, struct pci_vdev *dev, char *opts)
 	if (!vmei)
 		return;
 
-	vmei_del_reset_event(vmei);
 	vmei_stop(vmei);
-
-	pthread_mutex_destroy(&vmei->mutex);
-	free(vmei->config);
-	free(vmei);
+	vmei_del_reset_event(vmei);
 }
 
 const struct pci_vdev_ops pci_ops_vmei = {

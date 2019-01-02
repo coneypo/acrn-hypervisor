@@ -23,6 +23,7 @@ const char *state_str[] = {
 	[VM_CREATED] = "stopped",
 	[VM_STARTED] = "started",
 	[VM_PAUSED] = "paused",
+	[VM_SUSPENDED] = "suspended",
 	[VM_UNTRACKED] = "untracked",
 };
 
@@ -127,13 +128,13 @@ static void _scan_alive_vm(void)
 	int pid;
 	int ret;
 
-	ret = check_dir(ACRN_DM_SOCK_ROOT);
+	ret = check_dir(ACRN_DM_SOCK_PATH);
 	if (ret) {
 		pdebug();
 		return;
 	}
 
-	dir = opendir(ACRN_DM_SOCK_ROOT);
+	dir = opendir(ACRN_DM_SOCK_PATH);
 	if (!dir) {
 		pdebug();
 		return;
@@ -174,7 +175,7 @@ static void _scan_alive_vm(void)
 				vm->state = VM_STARTED;
 				break;
 			case VM_SUSPEND_SUSPEND:
-				vm->state = VM_PAUSED;
+				vm->state = VM_SUSPENDED;
 				break;
 			default:
 				vm->state = VM_STATE_UNKNOWN;
@@ -222,19 +223,19 @@ static void _scan_added_vm(void)
 	char suffix[128];
 	int ret;
 
-	ret = check_dir(ACRNCTL_OPT_ROOT);
+	ret = check_dir(ACRN_CONF_PATH);
 	if (ret) {
 		pdebug();
 		return;
 	}
 
-	ret = check_dir("/opt/acrn/conf/add");
+	ret = check_dir(ACRN_CONF_PATH_ADD);
 	if (ret) {
 		pdebug();
 		return;
 	}
 
-	dir = opendir("/opt/acrn/conf/add");
+	dir = opendir(ACRN_CONF_PATH_ADD);
 	if (!dir) {
 		pdebug();
 		return;
@@ -370,8 +371,8 @@ int start_vm(const char *vmname)
 {
 	char cmd[128];
 
-	if (snprintf(cmd, sizeof(cmd), "bash %s/add/%s.sh $(cat %s/add/%s.args)",
-			ACRNCTL_OPT_ROOT, vmname, ACRNCTL_OPT_ROOT, vmname) >= sizeof(cmd)) {
+	if (snprintf(cmd, sizeof(cmd), "bash %s/%s.sh $(cat %s/%s.args)",
+			ACRN_CONF_PATH_ADD, vmname, ACRN_CONF_PATH_ADD, vmname) >= sizeof(cmd)) {
 		printf("ERROR: command is truncated\n");
 		return -1;
 	}

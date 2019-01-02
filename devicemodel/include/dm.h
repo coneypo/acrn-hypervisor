@@ -32,16 +32,19 @@
 #include <stdbool.h>
 #include "types.h"
 #include "vmm.h"
+#include "dm_string.h"
 
 struct vmctx;
 extern int guest_ncpus;
 extern char *guest_uuid_str;
 extern uint8_t trusty_enabled;
 extern char *vsbl_file_name;
+extern char *ovmf_file_name;
 extern char *kernel_file_name;
 extern char *elf_file_name;
 extern char *vmname;
 extern bool stdio_in_use;
+extern char *mac_seed;
 
 int vmexit_task_switch(struct vmctx *ctx, struct vhm_request *vhm_req,
 		       int *vcpu);
@@ -57,6 +60,7 @@ int vmexit_task_switch(struct vmctx *ctx, struct vhm_request *vhm_req,
  */
 void *paddr_guest2host(struct vmctx *ctx, uintptr_t gaddr, size_t len);
 int  virtio_uses_msix(void);
+size_t high_bios_size(void);
 void ptdev_no_reset(bool enable);
 void init_debugexit(void);
 void deinit_debugexit(void);

@@ -37,7 +37,7 @@
 #include <hypervisor.h>
 #include "pci_priv.h"
 
-static int vdev_hostbridge_init(struct pci_vdev *vdev)
+static int32_t vdev_hostbridge_init(struct pci_vdev *vdev)
 {
 	/* PCI config space */
 	pci_vdev_write_cfg_u16(vdev, PCIR_VENDOR, (uint16_t)0x8086U);
@@ -84,12 +84,12 @@ static int vdev_hostbridge_init(struct pci_vdev *vdev)
 	return 0;
 }
 
-static int vdev_hostbridge_deinit(__unused struct pci_vdev *vdev)
+static int32_t vdev_hostbridge_deinit(__unused struct pci_vdev *vdev)
 {
 	return 0;
 }
 
-static int vdev_hostbridge_cfgread(struct pci_vdev *vdev, uint32_t offset,
+static int32_t vdev_hostbridge_cfgread(const struct pci_vdev *vdev, uint32_t offset,
 	uint32_t bytes, uint32_t *val)
 {
 	/* Assumption: access needed to be aligned on 1/2/4 bytes */
@@ -103,7 +103,7 @@ static int vdev_hostbridge_cfgread(struct pci_vdev *vdev, uint32_t offset,
 	return 0;
 }
 
-static int vdev_hostbridge_cfgwrite(struct pci_vdev *vdev, uint32_t offset,
+static int32_t vdev_hostbridge_cfgwrite(struct pci_vdev *vdev, uint32_t offset,
 	uint32_t bytes, uint32_t val)
 {
 	/* Assumption: access needed to be aligned on 1/2/4 bytes */
@@ -118,7 +118,7 @@ static int vdev_hostbridge_cfgwrite(struct pci_vdev *vdev, uint32_t offset,
 	return 0;
 }
 
-struct pci_vdev_ops pci_ops_vdev_hostbridge = {
+const struct pci_vdev_ops pci_ops_vdev_hostbridge = {
 	.init = vdev_hostbridge_init,
 	.deinit = vdev_hostbridge_deinit,
 	.cfgwrite = vdev_hostbridge_cfgwrite,

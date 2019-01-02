@@ -82,6 +82,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include "usb_core.h"
+#include "dm_string.h"
 
 SET_DECLARE(usb_emu_set, struct usb_devemu);
 int usb_log_level;
@@ -205,7 +206,13 @@ usb_native_is_port_existed(uint8_t bus_num, uint8_t port_num)
 		return 0;
 	}
 
-	native_port_cnt = atoi(cnt);
+	rc = dm_strtoi(cnt, (char **)&cnt, 10, &native_port_cnt);
+	if (rc) {
+		UPRINTF(LWRN, "fail to get maxchild number\r\n");
+		close(fd);
+		return 0;
+	}
+
 	if (port_num > native_port_cnt || port_num < 0) {
 		UPRINTF(LWRN, "invalid port_num %d, max port count %d\r\n",
 				port_num, native_port_cnt);
@@ -265,10 +272,21 @@ usb_dev_path(struct usb_devpath *path)
 	return output;
 }
 
+bool
+usb_dev_path_cmp(struct usb_devpath *p1, struct usb_devpath *p2)
+{
+	if (!p1 || !p2)
+		return false;
+
+	return (p1->bus == p2->bus && p1->depth == p2->depth &&
+				memcmp(p1->path, p2->path, p1->depth) == 0);
+}
+
 int
 usb_get_hub_port_num(struct usb_devpath *path)
 {
 	int rc, fd;
+	int icnt;
 	char buf[128];
 	char cnt[8];
 
@@ -296,5 +314,12 @@ usb_get_hub_port_num(struct usb_devpath *path)
 	}
 
 	close(fd);
-	return atoi(cnt);
+
+	rc = dm_strtoi(cnt, (char **)&cnt, 10, &icnt);
+	if (rc) {
+		UPRINTF(LWRN, "fail to get maxchild\r\n");
+		return -1;
+	}
+
+	return icnt;
 }

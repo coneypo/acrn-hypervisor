@@ -1,8 +1,8 @@
 choice
-	prompt "Platform"
+	prompt "Type of boot firmware (BIOS) on the target platform"
 	default PLATFORM_SBL
 	help
-	  The BIOS used on the target board.
+	  The boot firmware (BIOS) used on the target board.
 
 config PLATFORM_UEFI
 	bool "UEFI"
@@ -62,15 +62,10 @@ config IOREQ_POLLING
 
 endchoice
 
-config PLATFORM
-	string
-	default "uefi" if PLATFORM_UEFI
-	default "sbl" if PLATFORM_SBL
-
 config BOARD
 	string "Target board"
 	help
-	The target board this build runs on top of.
+	  The target board this build runs on top of.
 
 config DEFCONFIG_LIST
 	string
@@ -95,7 +90,7 @@ config MAX_VM_NUM
 	  general-purpose builds the maximum of physical cores can be used.
 
 config MAX_VCPUS_PER_VM
-	int "Maximum number of VCPUS per VM"
+	int "Maximum number of VCPUs per VM"
 	range 1 8
 	default 4 if PLATFORM_SBL
 	default 8 if PLATFORM_UEFI
@@ -109,7 +104,7 @@ config MAX_PCPU_NUM
 	default 8
 
 config MAX_EMULATED_MMIO_REGIONS
-	int "Maximum number of emulated mmio regions"
+	int "Maximum number of emulated MMIO regions"
 	range 0 128
 	default 16
 
@@ -126,7 +121,7 @@ config MAX_IOMMU_NUM
 	  The maximum number of physical IOMMUs the hypervisor can support.
 
 config STACK_SIZE
-	hex "Capacity of one stack, in byte"
+	hex "Capacity of one stack, in bytes"
 	default 0x2000
 	help
 	  The size of stacks used by physical cores. Each core uses one stack
@@ -154,42 +149,44 @@ config CPU_UP_TIMEOUT
 	  for secondary CPUs to start up.
 
 choice
-	prompt "serial IO type"
+	prompt "Serial IO type"
 	depends on !RELEASE
-	default SERIAL_MMIO if PLATFORM_SBL
-	default SERIAL_PIO  if PLATFORM_UEFI
+	optional
 	help
-	  Whether the physical serial port shall be accessed via memory-mapped
-	  registers or I/O ports.
+	  If selected, this configures whether the physical serial port shall
+	  be accessed via memory-mapped registers or I/O ports.
 
-config SERIAL_MMIO
-	bool "MMIO"
+	  If this is not selected, the serial port is disabled. This is the
+	  default.
+
+config SERIAL_PCI
+	bool "PCI"
 	help
-	  Select this if the serial port shall be accessed via memory-mapped
+	  Select this if the serial port shall be accessed via PCI memory-mapped
 	  registers.
 
-config SERIAL_PIO
-	bool "PIO"
+config SERIAL_LEGACY
+	bool "Legacy"
 	help
-	  Select this if the serial port shall be accessed via in/out
+	  Select this if the serial port shall be accessed via legacy port in/out
 	  instructions.
 
 endchoice
 
-config SERIAL_MMIO_BASE
-	hex "Base address of serial MMIO region"
-	depends on SERIAL_MMIO
-	default 0xfc000000
+config SERIAL_PCI_BDF
+	string "BDF of serial PCI device"
+	depends on SERIAL_PCI
+	default "0:18.2"
 	help
-	  A 64-bit integer indicating the base physical address of the
-	  memory-mapped UART registers.
+	  BDF: bus, device and function of the serial PCI device; for an example,
+	  PCI device ttyS2: 0:18.2.
 
 config SERIAL_PIO_BASE
 	hex "Base address of serial PIO region"
-	depends on SERIAL_PIO
+	depends on SERIAL_LEGACY
 	default 0x3f8
 	help
-	  The base address of the UART ports. This is logically 16-bit but used
+	  The base address of the serial ports. This is logically 16-bit but used
 	  as a 64-bit integer.
 
 config COM_BASE
@@ -256,17 +253,18 @@ config HV_RAM_START
 	default 0x6e000000 if PLATFORM_SBL
 	default 0x00100000 if PLATFORM_UEFI
 	help
-	  A 64-bit integer indicating the base physical address to where the hypervisor
-	  should be loaded to. If RELOC is disabled the bootloader is required
-	  to load the hypervisor to this specific address. Otherwise the
-	  hypervisor will not boot. With RELOC enabled the hypervisor is capable
-	  of relocating its symbols to where it is placed at, and thus the
-	  bootloader may not place the hypervisor at this specific address.
+	  A 64-bit integer indicating the base physical address where the
+	  hypervisor should be loaded. If RELOC is disabled, the bootloader
+	  is required to load the hypervisor to this specific address.
+	  Otherwise the hypervisor will not boot. With RELOC enabled the
+	  hypervisor may relocate its symbols to where it is placed,
+	  and thus the bootloader might not place the hypervisor at this
+	  specific address.
 
 config HV_RAM_SIZE
 	hex "Size of the RAM region used by the hypervisor"
-	default 0x04800000 if PLATFORM_SBL
-	default 0x08000000 if PLATFORM_UEFI
+	default 0x07800000 if PLATFORM_SBL
+	default 0x0b000000 if PLATFORM_UEFI
 	help
 	  A 64-bit integer indicating the size of RAM used by the hypervisor.
 	  It is ensured at link time that the footprint of the hypervisor
@@ -278,22 +276,23 @@ config PLATFORM_RAM_SIZE
 	default 0x400000000 if PLATFORM_UEFI
 	help
 	  A 64-bit integer indicating the size of the physical platform RAM
-	  (not included the MMIO).
+	  (MMIO not included).
 
 config SOS_RAM_SIZE
-	hex "Size of the vm0 RAM"
+	hex "Size of the vm0 (SOS) RAM"
 	default 0x200000000 if PLATFORM_SBL
 	default 0x400000000 if PLATFORM_UEFI
 	help
-	  A 64-bit integer indicating the size of the vm0 RAM (not included the MMIO).
+	  A 64-bit integer indicating the size of the vm0 (SOS) RAM (MMIO not
+	  included).
 
  config UOS_RAM_SIZE
-	hex "Size of the UOS RAM"
+	hex "Size of the User OS (UOS) RAM"
 	default 0x100000000 if PLATFORM_SBL
 	default 0x200000000 if PLATFORM_UEFI
 	help
-	  A 64-bit integer indicating the size of the user OS RAM (not included the MMIO).
-	  Now we assume each UOS uses same amount of RAM size.
+	  A 64-bit integer indicating the size of the User OS RAM (MMIO not
+	  included). Now we assume each UOS uses same amount of RAM size.
 
 config CONSTANT_ACPI
 	bool "The platform ACPI info is constant"
@@ -305,14 +304,14 @@ config CONSTANT_ACPI
 	  built-in tables after parsing the real ACPI tables at runtime.
 
 config DMAR_PARSE_ENABLED
-	bool "Enable DMAR parsing"
+	bool "Enable ACPI DMA Remapping tables parsing"
 	default n if PLATFORM_SBL
 	default y if PLATFORM_UEFI
 	help
 	  Whether to parse the ACPI DMA Remapping tables at runtime.
 
 config GPU_SBDF
-	hex
+	hex "Segment, Bus, Device, and function of the GPU"
 	depends on DMAR_PARSE_ENABLED
 	default 0x00000010
 	help
@@ -323,7 +322,7 @@ config GPU_SBDF
 	  (2 << 3) | (0 << 0), i.e. 0x00000010.
 
 config EFI_STUB
-	bool
+	bool "Enable EFI stub"
 	depends on PLATFORM_UEFI
 	default y
 
@@ -333,11 +332,11 @@ config UEFI_OS_LOADER_NAME
 	default "\\EFI\\org.clearlinux\\bootloaderx64.efi"
 
 config MTRR_ENABLED
-	bool
+	bool "Memory Type Range Registers (MTRR) enabled"
 	default y
 
 config RELOC
-	bool "Enable relocation"
+	bool "Enable hypervisor relocation"
 	default n
 	help
 	  When selected, the hypervisor will relocate itself to where it is
@@ -346,7 +345,7 @@ config RELOC
 	  image to RAM_START, otherwise the hypervisor will not start up.
 
 config IOMMU_BUS_NUM
-	hex "Limit of PCI bus on IOMMU initialization"
+	hex "Highest PCI bus ID used during IOMMU initialization"
 	default 0x10 if PLATFORM_SBL
 	default 0x100 if PLATFORM_UEFI
 	help
@@ -354,23 +353,23 @@ config IOMMU_BUS_NUM
 	  the IOMMU domain of the first VM.
 
 config MAX_PCI_DEV_NUM
-	int "Maximum number of PCI dev"
+	int "Maximum number of PCI devices"
 	range 1 1024
 	default 96
 
 config MAX_MSIX_TABLE_NUM
-	int "Maximum number of MSI-X Table per device"
+	int "Maximum number of MSI-X tables per device"
 	range 1 2048
 	default 16
 
 config ENFORCE_VALIDATED_ACPI_INFO
-	bool "Enforce validated ACPI info table"
+	bool "Enforce the use of validated ACPI info table"
 	default n
 	help
-	  When set, validated ACPI info tables is enforced and using offline
-	  tools to generate such data is required. Otherwise a warning will be
-	  printed when validated ACPI info is unavailable, but a binary can
-	  still be built with the ACPI info template.
+	  When set, the use of validated ACPI info tables is enforced and using
+	  an offline tool to generate such data is required. Otherwise a
+	  warning will be printed when validated ACPI info is unavailable, but
+	  a binary can still be built with the ACPI info template.
 
 config L1D_FLUSH_VMENTRY_ENABLED
 	bool "Enable L1 cache flush before VM entry"

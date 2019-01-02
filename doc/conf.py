@@ -35,7 +35,8 @@ if "RELEASE" in os.environ:
 # ones.
 
 sys.path.insert(0, os.path.join(os.path.abspath('.'), 'extensions'))
-extensions = ['breathe', 'sphinx.ext.graphviz', 'sphinx.ext.extlinks', 'kerneldoc']
+extensions = ['breathe', 'sphinx.ext.graphviz', 'sphinx.ext.extlinks',
+              'kerneldoc', 'eager_only']
 
 # extlinks provides a macro template
 
@@ -71,7 +72,7 @@ master_doc = 'index'
 
 # General information about the project.
 project = u'Project ACRN™'
-copyright = u'2018, Project ACRN'
+copyright = u'2019, Project ACRN'
 author = u'Project ARCN developers'
 
 # The version info for the project you're documenting, acts as replacement for
@@ -188,6 +189,7 @@ else:
 html_context = {
    'current_version': current_version,
    'versions': ( ("latest", "/latest/"),
+                 ("0.4", "/0.4/"),
                  ("0.3", "/0.3/"),
                  ("0.2", "/0.2/"),
                  ("0.1", "/0.1/"),

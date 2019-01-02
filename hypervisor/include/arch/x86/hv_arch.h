@@ -11,14 +11,14 @@
 #include <gdt.h>
 #include <idt.h>
 #include <apicreg.h>
-#include <ioapic.h>
 #include <lapic.h>
 #include <msr.h>
 #include <io.h>
 #include <ioreq.h>
-#include <mtrr.h>
+#include <vmtrr.h>
 #include <timer.h>
 #include <vlapic.h>
+#include <schedule.h>
 #include <vcpu.h>
 #include <trusty.h>
 #include <guest_pm.h>
@@ -28,11 +28,13 @@
 #include <vioapic.h>
 #include <vm.h>
 #include <cpuid.h>
+#include <vcpuid.h>
 #include <page.h>
 #include <mmu.h>
 #include <pgtable.h>
 #include <irq.h>
 #include <vmx.h>
+#include <vmcs.h>
 #include <assign.h>
 #include <vtd.h>
 

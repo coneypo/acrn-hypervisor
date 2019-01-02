@@ -80,7 +80,7 @@ struct mpfps {
 	uint8_t	mpfb3;
 	uint8_t	mpfb4;
 	uint8_t	mpfb5;
-} __attribute__((packed));
+} __packed;
 
 /* MP Configuration Table Header */
 struct mpcth {
@@ -97,7 +97,7 @@ struct mpcth {
 	uint16_t extended_table_length;
 	uint8_t	extended_table_checksum;
 	uint8_t	reserved;
-} __attribute__((packed));
+} __packed;
 
 struct proc_entry {
 	uint8_t	type;
@@ -108,13 +108,13 @@ struct proc_entry {
 	uint32_t feature_flags;
 	uint32_t reserved1;
 	uint32_t reserved2;
-} __attribute__((packed));
+} __packed;
 
 struct bus_entry {
 	uint8_t	type;
 	uint8_t	bus_id;
 	uint8_t	bus_type[6];
-} __attribute__((packed));
+} __packed;
 
 struct int_entry {
 	uint8_t	type;
@@ -124,7 +124,7 @@ struct int_entry {
 	uint8_t	src_bus_irq;
 	uint8_t	dst_apic_id;
 	uint8_t	dst_apic_int;
-} __attribute__((packed));
+} __packed;
 
 struct mptable_info {
 	struct mpfps		mpfp;
@@ -288,7 +288,7 @@ static uint8_t mpt_compute_checksum(void *base, size_t len)
 	return (256U - sum);
 }
 
-int mptable_build(struct acrn_vm *vm)
+int32_t mptable_build(struct acrn_vm *vm)
 {
 	char                    *startaddr;
 	char                    *curraddr;
@@ -296,22 +296,25 @@ int mptable_build(struct acrn_vm *vm)
 	struct mpfps            *mpfp;
 	size_t			mptable_length, table_length;
 
-	startaddr = (char *)gpa2hva(vm, MPTABLE_BASE);
-
 	table_length = vm->vm_desc->mptable->mpch.base_table_length;
 	mptable_length = sizeof(struct mpfps) + table_length;
-	/* Copy mptable info into guest memory */
-	(void)memcpy_s((void *)startaddr, MPTABLE_MAX_LENGTH,
-				(void *)vm->vm_desc->mptable,
-				mptable_length);
+	if (mptable_length > MPTABLE_MAX_LENGTH) {
+		return -1;
+	}
 
+	/* Copy mptable info into guest memory */
+	copy_to_gpa(vm, (void *)vm->vm_desc->mptable, MPTABLE_BASE, mptable_length);
+
+	startaddr = (char *)gpa2hva(vm, MPTABLE_BASE);
 	curraddr = startaddr;
+	stac();
 	mpfp = (struct mpfps *)curraddr;
 	mpfp->checksum = mpt_compute_checksum(mpfp, sizeof(struct mpfps));
 	curraddr += sizeof(struct mpfps);
 
 	mpch = (struct mpcth *)curraddr;
 	mpch->checksum = mpt_compute_checksum(mpch, mpch->base_table_length);
+	clac();
 
 	return 0U;
 }

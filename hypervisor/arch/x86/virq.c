@@ -74,7 +74,7 @@ static bool vcpu_pending_request(struct acrn_vcpu *vcpu)
 {
 	struct acrn_vlapic *vlapic;
 	uint32_t vector = 0U;
-	int ret = 0;
+	int32_t ret = 0;
 
 	/* Query vLapic to get vector to inject */
 	vlapic = vcpu_vlapic(vcpu);
@@ -108,47 +108,46 @@ void vcpu_make_request(struct acrn_vcpu *vcpu, uint16_t eventid)
 	}
 }
 
-static int vcpu_inject_vlapic_int(struct acrn_vcpu *vcpu)
+static int32_t vcpu_inject_vlapic_int(struct acrn_vcpu *vcpu)
 {
 	struct acrn_vlapic *vlapic = vcpu_vlapic(vcpu);
 	uint32_t vector = 0U;
-	int ret = 0;
+	int32_t ret = 0;
 
 	/*
 	 * This function used for inject virtual interrupt
 	 * through vmcs.
 	 */
 	if (is_apicv_intr_delivery_supported()) {
-		return -1;
+		ret = -1;
+	} else {
+		/* Query vLapic to get vector to inject */
+		ret = vlapic_pending_intr(vlapic, &vector);
+		if (ret != 0) {
+			/*
+			 * From the Intel SDM, Volume 3, 6.3.2 Section "Maskable
+			 * Hardware Interrupts":
+			 * - maskable interrupt vectors [16,255] can be delivered
+			 *   through the local APIC.
+			 */
+
+			if (!((vector >= 16U) && (vector <= 255U))) {
+				dev_dbg(ACRN_DBG_INTR, "invalid vector %d from local APIC", vector);
+				ret = -1;
+			} else {
+				exec_vmwrite32(VMX_ENTRY_INT_INFO_FIELD, VMX_INT_INFO_VALID |
+					(vector & 0xFFU));
+
+				vlapic_intr_accepted(vlapic, vector);
+				ret = 0;
+			}
+		}
 	}
 
-	/* Query vLapic to get vector to inject */
-	ret = vlapic_pending_intr(vlapic, &vector);
-
-	/*
-	 * From the Intel SDM, Volume 3, 6.3.2 Section "Maskable
-	 * Hardware Interrupts":
-	 * - maskable interrupt vectors [16,255] can be delivered
-	 *   through the local APIC.
-	 */
-	if (ret == 0) {
-		return 0;
-	}
-
-	if (!(vector >= 16U && vector <= 255U)) {
-		dev_dbg(ACRN_DBG_INTR, "invalid vector %d from local APIC",
-				vector);
-		return -1;
-	}
-
-	exec_vmwrite32(VMX_ENTRY_INT_INFO_FIELD, VMX_INT_INFO_VALID |
-		(vector & 0xFFU));
-
-	vlapic_intr_accepted(vlapic, vector);
-	return 0;
+	return ret;
 }
 
-static int vcpu_do_pending_extint(const struct acrn_vcpu *vcpu)
+static int32_t vcpu_do_pending_extint(const struct acrn_vcpu *vcpu)
 {
 	struct acrn_vm *vm;
 	struct acrn_vcpu *primary;
@@ -175,25 +174,8 @@ static int vcpu_do_pending_extint(const struct acrn_vcpu *vcpu)
 	return 0;
 }
 
-/* please keep this for interrupt debug:
- * 1. Timer alive or not
- * 2. native LAPIC interrupt pending/EOI status
- * 3. CPU stuck or not
- */
-void dump_lapic(void)
-{
-	dev_dbg(ACRN_DBG_INTR,
-		"LAPIC: TIME %08x, init=0x%x cur=0x%x ISR=0x%x IRR=0x%x",
-		msr_read(MSR_IA32_EXT_APIC_LVT_TIMER),
-		msr_read(MSR_IA32_EXT_APIC_INIT_COUNT),
-		msr_read(MSR_IA32_EXT_APIC_CUR_COUNT),
-		msr_read(MSR_IA32_EXT_APIC_ISR7),
-		msr_read(MSR_IA32_EXT_APIC_IRR7)
-		);
-}
-
 /* SDM Vol3 -6.15, Table 6-4 - interrupt and exception classes */
-static int get_excep_class(uint32_t vector)
+static int32_t get_excep_class(uint32_t vector)
 {
 	if ((vector == IDT_DE) || (vector == IDT_TS) || (vector == IDT_NP) ||
 		(vector == IDT_SS) || (vector == IDT_GP)) {
@@ -205,7 +187,7 @@ static int get_excep_class(uint32_t vector)
 	}
 }
 
-int vcpu_queue_exception(struct acrn_vcpu *vcpu, uint32_t vector, uint32_t err_code)
+int32_t vcpu_queue_exception(struct acrn_vcpu *vcpu, uint32_t vector, uint32_t err_code)
 {
 	struct acrn_vcpu_arch *arch = &vcpu->arch;
 	/* VECTOR_INVALID is also greater than 32 */
@@ -222,15 +204,12 @@ int vcpu_queue_exception(struct acrn_vcpu *vcpu, uint32_t vector, uint32_t err_c
 	 * double fault */
 	prev_class = get_excep_class(prev_vector);
 	new_class = get_excep_class(vector);
-	if (prev_vector == IDT_DF &&
-		new_class != EXCEPTION_CLASS_BENIGN) {
+	if ((prev_vector == IDT_DF) && (new_class != EXCEPTION_CLASS_BENIGN)) {
 		/* triple fault happen - shutdwon mode */
 		vcpu_make_request(vcpu, ACRN_REQUEST_TRP_FAULT);
 		return 0;
-	} else if ((prev_class == EXCEPTION_CLASS_CONT &&
-			new_class == EXCEPTION_CLASS_CONT) ||
-			(prev_class == EXCEPTION_CLASS_PF &&
-			 new_class != EXCEPTION_CLASS_BENIGN)) {
+	} else if (((prev_class == EXCEPTION_CLASS_CONT) && (new_class == EXCEPTION_CLASS_CONT)) ||
+		((prev_class == EXCEPTION_CLASS_PF) && (new_class != EXCEPTION_CLASS_BENIGN))) {
 		/* generate double fault */
 		vector = IDT_DF;
 		err_code = 0U;
@@ -266,29 +245,35 @@ static void vcpu_inject_exception(struct acrn_vcpu *vcpu, uint32_t vector)
 	vcpu_retain_rip(vcpu);
 }
 
-static int vcpu_inject_hi_exception(struct acrn_vcpu *vcpu)
+static int32_t vcpu_inject_hi_exception(struct acrn_vcpu *vcpu)
 {
 	uint32_t vector = vcpu->arch.exception_info.exception;
+	int32_t ret;
 
-	if (vector == IDT_MC || vector == IDT_BP || vector == IDT_DB) {
+	if ((vector == IDT_MC) || (vector == IDT_BP) || (vector == IDT_DB)) {
 		vcpu_inject_exception(vcpu, vector);
-		return 1;
+		ret = 1;
+	} else {
+		ret = 0;
 	}
 
-	return 0;
+	return ret;
 }
 
-static int vcpu_inject_lo_exception(struct acrn_vcpu *vcpu)
+static int32_t vcpu_inject_lo_exception(struct acrn_vcpu *vcpu)
 {
 	uint32_t vector = vcpu->arch.exception_info.exception;
+	int32_t ret;
 
 	/* high priority exception already be injected */
 	if (vector <= NR_MAX_VECTOR) {
 		vcpu_inject_exception(vcpu, vector);
-		return 1;
+	        ret = 1;
+	} else {
+		ret = 0;
 	}
 
-	return 0;
+	return ret;
 }
 
 /* Inject external interrupt to guest */
@@ -339,7 +324,7 @@ void vcpu_inject_ss(struct acrn_vcpu *vcpu)
 	vcpu_make_request(vcpu, ACRN_REQUEST_EXCP);
 }
 
-int interrupt_window_vmexit_handler(struct acrn_vcpu *vcpu)
+int32_t interrupt_window_vmexit_handler(struct acrn_vcpu *vcpu)
 {
 	uint32_t value32;
 
@@ -357,10 +342,11 @@ int interrupt_window_vmexit_handler(struct acrn_vcpu *vcpu)
 	return 0;
 }
 
-int external_interrupt_vmexit_handler(struct acrn_vcpu *vcpu)
+int32_t external_interrupt_vmexit_handler(struct acrn_vcpu *vcpu)
 {
 	uint32_t intr_info;
 	struct intr_excp_ctx ctx;
+	int32_t ret;
 
 	intr_info = exec_vmread32(VMX_EXIT_INT_INFO);
 	if (((intr_info & VMX_INT_INFO_VALID) == 0U) ||
@@ -368,107 +354,133 @@ int external_interrupt_vmexit_handler(struct acrn_vcpu *vcpu)
 		!= VMX_INT_TYPE_EXT_INT)) {
 		pr_err("Invalid VM exit interrupt info:%x", intr_info);
 		vcpu_retain_rip(vcpu);
-		return -EINVAL;
-	}
-
-	ctx.vector = intr_info & 0xFFU;
-	ctx.rip    = vcpu_get_rip(vcpu);
-	ctx.rflags = vcpu_get_rflags(vcpu);
-	ctx.cs     = exec_vmread32(VMX_GUEST_CS_SEL);
+		ret = -EINVAL;
+	} else {
+		ctx.vector = intr_info & 0xFFU;
+		ctx.rip    = vcpu_get_rip(vcpu);
+		ctx.rflags = vcpu_get_rflags(vcpu);
+		ctx.cs     = exec_vmread32(VMX_GUEST_CS_SEL);
 
 #ifdef CONFIG_PARTITION_MODE
-	partition_mode_dispatch_interrupt(&ctx);
+		partition_mode_dispatch_interrupt(&ctx);
 #else
-	dispatch_interrupt(&ctx);
+		dispatch_interrupt(&ctx);
 #endif
 
-	vcpu_retain_rip(vcpu);
+		vcpu_retain_rip(vcpu);
 
-	TRACE_2L(TRACE_VMEXIT_EXTERNAL_INTERRUPT, ctx.vector, 0UL);
+		TRACE_2L(TRACE_VMEXIT_EXTERNAL_INTERRUPT, ctx.vector, 0UL);
+		ret = 0;
+	}
 
-	return 0;
+	return ret;
 }
 
-int acrn_handle_pending_request(struct acrn_vcpu *vcpu)
+static inline int32_t acrn_inject_pending_vector(struct acrn_vcpu *vcpu, uint64_t *pending_req_bits);
+
+int32_t acrn_handle_pending_request(struct acrn_vcpu *vcpu)
 {
-	int ret = 0;
+	int32_t ret = 0;
 	uint32_t tmp;
 	uint32_t intr_info;
 	uint32_t error_code;
 	struct acrn_vcpu_arch * arch = &vcpu->arch;
 	uint64_t *pending_req_bits = &arch->pending_req;
-	struct acrn_vlapic *vlapic = vcpu_vlapic(vcpu);
+	struct acrn_vlapic *vlapic;
 
 	if (bitmap_test_and_clear_lock(ACRN_REQUEST_TRP_FAULT,
 						pending_req_bits)) {
 		pr_fatal("Triple fault happen -> shutdown!");
-		return -EFAULT;
-	}
+		ret = -EFAULT;
+	} else {
 
-	if (bitmap_test_and_clear_lock(ACRN_REQUEST_EPT_FLUSH,
-						pending_req_bits)) {
-		invept(vcpu);
-	}
-
-	if (bitmap_test_and_clear_lock(ACRN_REQUEST_VPID_FLUSH,
-						pending_req_bits)) {
-		flush_vpid_single(arch->vpid);
-	}
-
-	if (bitmap_test_and_clear_lock(ACRN_REQUEST_TMR_UPDATE,
-						pending_req_bits)) {
-		vioapic_update_tmr(vcpu);
-	}
-
-	/* handling cancelled event injection when vcpu is switched out */
-	if (arch->inject_event_pending) {
-		if ((arch->inject_info.intr_info &
-		     (EXCEPTION_ERROR_CODE_VALID << 8U)) != 0U) {
-			error_code = arch->inject_info.error_code;
-			exec_vmwrite32(VMX_ENTRY_EXCEPTION_ERROR_CODE,
-			        error_code);
+		if (bitmap_test_and_clear_lock(ACRN_REQUEST_EPT_FLUSH, pending_req_bits)) {
+			invept(vcpu);
 		}
 
-		intr_info = arch->inject_info.intr_info;
-		exec_vmwrite32(VMX_ENTRY_INT_INFO_FIELD, intr_info);
+		if (bitmap_test_and_clear_lock(ACRN_REQUEST_VPID_FLUSH,	pending_req_bits)) {
+			flush_vpid_single(arch->vpid);
+		}
 
-		arch->inject_event_pending = false;
-		goto INTR_WIN;
+		if (bitmap_test_and_clear_lock(ACRN_REQUEST_TMR_UPDATE,	pending_req_bits)) {				vioapic_update_tmr(vcpu);
+		}
+
+		/* handling cancelled event injection when vcpu is switched out */
+		if (arch->inject_event_pending) {
+			if ((arch->inject_info.intr_info & (EXCEPTION_ERROR_CODE_VALID << 8U)) != 0U) {
+				error_code = arch->inject_info.error_code;
+				exec_vmwrite32(VMX_ENTRY_EXCEPTION_ERROR_CODE, error_code);
+			}
+
+			intr_info = arch->inject_info.intr_info;
+			exec_vmwrite32(VMX_ENTRY_INT_INFO_FIELD, intr_info);
+
+			arch->inject_event_pending = false;
+		} else {
+			/*
+			 * From SDM Vol3 26.3.2.5:
+			 * Once the virtual interrupt is recognized, it will be delivered
+			 * in VMX non-root operation immediately after VM entry(including
+			 * any specified event injection) completes.
+			 *
+			 * So the hardware can handle vmcs event injection and
+			 * evaluation/delivery of apicv virtual interrupts in one time
+			 * vm-entry.
+			 *
+			 * Here to sync the pending interrupts to irr and update rvi if
+			 * needed. And then try to handle vmcs event injection.
+			 */
+			if (is_apicv_intr_delivery_supported() &&
+				bitmap_test_and_clear_lock(ACRN_REQUEST_EVENT, pending_req_bits)) {
+				vlapic = vcpu_vlapic(vcpu);
+				vlapic_apicv_inject_pir(vlapic);
+			}
+
+			/* SDM Vol 3 - table 6-2, inject high priority exception before
+			 * maskable hardware interrupt */
+			if (vcpu_inject_hi_exception(vcpu) == 0) {
+				/* inject NMI before maskable hardware interrupt */
+				if (bitmap_test_and_clear_lock(ACRN_REQUEST_NMI, pending_req_bits)) {
+					/* Inject NMI vector = 2 */
+					exec_vmwrite32(VMX_ENTRY_INT_INFO_FIELD,
+						VMX_INT_INFO_VALID | (VMX_INT_TYPE_NMI << 8U) | IDT_NMI);
+				} else {
+					ret = acrn_inject_pending_vector(vcpu, pending_req_bits);
+				}
+			}
+		}
+
+		/*
+		 * If "virtual-interrupt delivered" is enabled, CPU will evaluate
+		 * and automatic inject the virtual interrupts in appropriate time.
+		 * And from SDM Vol3 29.2.1, the apicv only trigger evaluation of
+		 * pending virtual interrupts when "interrupt-window exiting" is 0.
+		 *
+		 * External interrupt(from vpic) can't be delivered by "virtual-
+		 * interrupt delivery", it only deliver interrupt from vlapic.
+		 *
+		 * So need to enable "interrupt-window exiting", when there is
+		 * an ExtInt or there is lapic interrupt and virtual interrupt
+		 * deliver is disabled.
+		 */
+		if (arch->irq_window_enabled != 1U) {
+			if (bitmap_test(ACRN_REQUEST_EXTINT, pending_req_bits) ||
+				(!is_apicv_intr_delivery_supported() && vcpu_pending_request(vcpu))) {
+				tmp = exec_vmread32(VMX_PROC_VM_EXEC_CONTROLS);
+				tmp |= VMX_PROCBASED_CTLS_IRQ_WIN;
+				exec_vmwrite32(VMX_PROC_VM_EXEC_CONTROLS, tmp);
+				arch->irq_window_enabled = 1U;
+			}
+		}
 	}
 
-	/*
-	 * From SDM Vol3 26.3.2.5:
-	 * Once the virtual interrupt is recognized, it will be delivered
-	 * in VMX non-root operation immediately after VM entry(including
-	 * any specified event injection) completes.
-	 *
-	 * So the hardware can handle vmcs event injection and
-	 * evaluation/delivery of apicv virtual interrupts in one time
-	 * vm-entry.
-	 *
-	 * Here to sync the pending interrupts to irr and update rvi if
-	 * needed. And then try to handle vmcs event injection.
-	 */
-	if (is_apicv_intr_delivery_supported() &&
-		bitmap_test_and_clear_lock(ACRN_REQUEST_EVENT,
-			pending_req_bits)) {
-		vlapic_apicv_inject_pir(vlapic);
-	}
+	return ret;
+}
 
-	/* SDM Vol 3 - table 6-2, inject high priority exception before
-	 * maskable hardware interrupt */
-	if (vcpu_inject_hi_exception(vcpu) != 0) {
-		goto INTR_WIN;
-	}
-
-	/* inject NMI before maskable hardware interrupt */
-	if (bitmap_test_and_clear_lock(ACRN_REQUEST_NMI, pending_req_bits)) {
-		/* Inject NMI vector = 2 */
-		exec_vmwrite32(VMX_ENTRY_INT_INFO_FIELD,
-			VMX_INT_INFO_VALID | (VMX_INT_TYPE_NMI << 8U) | IDT_NMI);
-
-		goto INTR_WIN;
-	}
+static inline int32_t acrn_inject_pending_vector(struct acrn_vcpu *vcpu, uint64_t *pending_req_bits)
+{
+	int32_t ret = 0;
+	struct acrn_vcpu_arch * arch = &vcpu->arch;
 
 	/* handling pending vector injection:
 	 * there are many reason inject failed, we need re-inject again
@@ -480,66 +492,34 @@ int acrn_handle_pending_request(struct acrn_vcpu *vcpu)
 	if ((arch->idt_vectoring_info & VMX_INT_INFO_VALID) != 0U) {
 		exec_vmwrite32(VMX_ENTRY_INT_INFO_FIELD,
 				arch->idt_vectoring_info);
-		goto INTR_WIN;
-	}
+	} else {
 
-	/* Guest interruptable or not */
-	if (is_guest_irq_enabled(vcpu)) {
-		/* Inject external interrupt first */
-		if (bitmap_test_and_clear_lock(ACRN_REQUEST_EXTINT,
-			pending_req_bits)) {
-			/* has pending external interrupts */
-			ret = vcpu_do_pending_extint(vcpu);
-			goto INTR_WIN;
+		/* Guest interruptable or not */
+		if (is_guest_irq_enabled(vcpu)) {
+			/* Inject external interrupt first */
+			if (bitmap_test_and_clear_lock(ACRN_REQUEST_EXTINT, pending_req_bits)) {
+				/* has pending external interrupts */
+				ret = vcpu_do_pending_extint(vcpu);
+			} else {
+				/*
+				 * For "virtual-interrupt delivery" disabled case, if
+				 * the virtual interrupt injection conditions are satified,
+				 * then inject through vmcs.
+				 */
+				if ((!is_apicv_intr_delivery_supported()) &&
+					(bitmap_test_and_clear_lock(ACRN_REQUEST_EVENT,
+								pending_req_bits))) {
+					ret = vcpu_inject_vlapic_int(vcpu);
+				}
+			}
+		} else {
+			/* SDM Vol3 table 6-2, inject lowpri exception */
+			ret = vcpu_inject_lo_exception(vcpu);
+			if (ret != 0) {
+				ret = 0;
+			}
 		}
-
-		/*
-		 * For "virtual-interrupt delivery" disabled case, if
-		 * the virtual interrupt injection conditions are satified,
-		 * then inject through vmcs.
-		 */
-		if (!is_apicv_intr_delivery_supported() &&
-			bitmap_test_and_clear_lock(ACRN_REQUEST_EVENT,
-						pending_req_bits)) {
-			ret = vcpu_inject_vlapic_int(vcpu);
-			goto INTR_WIN;
-		}
 	}
-
-	/* SDM Vol3 table 6-2, inject lowpri exception */
-	if (vcpu_inject_lo_exception(vcpu) != 0) {
-		goto INTR_WIN;
-	}
-
-INTR_WIN:
-	/*
-	 * If "virtual-interrupt delivered" is enabled, CPU will evaluate
-	 * and automatic inject the virtual interrupts in appropriate time.
-	 * And from SDM Vol3 29.2.1, the apicv only trigger evaluation of
-	 * pending virtual interrupts when "interrupt-window exiting" is 0.
-	 *
-	 * External interrupt(from vpic) can't be delivered by "virtual-
-	 * interrupt delivery", it only deliver interrupt from vlapic.
-	 *
-	 * So need to enable "interrupt-window exiting", when there is
-	 * an ExtInt or there is lapic interrupt and virtual interrupt
-	 * deliver is disabled.
-	 */
-	if (arch->irq_window_enabled == 1U) {
-		return ret;
-	}
-
-	if (!bitmap_test(ACRN_REQUEST_EXTINT,
-						pending_req_bits) &&
-		(is_apicv_intr_delivery_supported() ||
-		!vcpu_pending_request(vcpu))) {
-		return ret;
-	}
-
-	tmp = exec_vmread32(VMX_PROC_VM_EXEC_CONTROLS);
-	tmp |= VMX_PROCBASED_CTLS_IRQ_WIN;
-	exec_vmwrite32(VMX_PROC_VM_EXEC_CONTROLS, tmp);
-	arch->irq_window_enabled = 1U;
 
 	return ret;
 }
@@ -572,12 +552,12 @@ void cancel_event_injection(struct acrn_vcpu *vcpu)
 /*
  * @pre vcpu != NULL
  */
-int exception_vmexit_handler(struct acrn_vcpu *vcpu)
+int32_t exception_vmexit_handler(struct acrn_vcpu *vcpu)
 {
 	uint32_t intinfo, int_err_code = 0U;
 	uint32_t exception_vector = VECTOR_INVALID;
 	uint32_t cpl;
-	int status = 0;
+	int32_t status = 0;
 
 	pr_dbg(" Handling guest exception");
 

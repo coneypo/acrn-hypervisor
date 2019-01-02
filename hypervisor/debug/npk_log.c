@@ -9,9 +9,42 @@ static int32_t npk_log_setup_ref;
 static bool npk_log_enabled;
 static uint64_t base;
 
-static inline int npk_write(const char *value, void *addr, size_t sz)
+#define HV_NPK_LOG_REF_SHIFT  2U
+#define HV_NPK_LOG_REF_MASK   ((1U << HV_NPK_LOG_REF_SHIFT) - 1U)
+
+#define HV_NPK_LOG_MAX 1024U
+#define HV_NPK_LOG_HDR 0x01000242U
+
+enum {
+	HV_NPK_LOG_CMD_INVALID = 0U,
+	HV_NPK_LOG_CMD_CONF,
+	HV_NPK_LOG_CMD_ENABLE,
+	HV_NPK_LOG_CMD_DISABLE,
+	HV_NPK_LOG_CMD_QUERY,
+};
+
+#define	HV_NPK_LOG_RES_INVALID	0x0U
+#define	HV_NPK_LOG_RES_OK	0x1U
+#define	HV_NPK_LOG_RES_KO	0x2U
+#define	HV_NPK_LOG_RES_ENABLED	0x3U
+#define	HV_NPK_LOG_RES_DISABLED	0x4U
+
+struct npk_chan {
+	uint64_t Dn;
+	uint64_t DnM;
+	uint64_t DnTS;
+	uint64_t DnMTS;
+	uint64_t USER;
+	uint64_t USER_TS;
+	uint32_t FLAG;
+	uint32_t FLAG_TS;
+	uint32_t MERR;
+	uint32_t unused;
+} __packed;
+
+static inline int32_t npk_write(const char *value, void *addr, size_t sz)
 {
-	int ret = -1;
+	int32_t ret = -1;
 
 	if (sz >= 8U) {
 		mmio_write64(*(uint64_t *)value, addr);
@@ -33,6 +66,7 @@ static inline int npk_write(const char *value, void *addr, size_t sz)
 void npk_log_setup(struct hv_npk_log_param *param)
 {
 	uint16_t i;
+	uint16_t pcpu_nums;
 
 	pr_info("HV_NPK_LOG: cmd %d param 0x%llx\n", param->cmd,
 			param->mmio_addr);
@@ -57,7 +91,8 @@ void npk_log_setup(struct hv_npk_log_param *param)
 		}
 		if ((base != 0UL) && (param->cmd == HV_NPK_LOG_CMD_ENABLE)) {
 			if (!npk_log_enabled) {
-				for (i = 0U; i < phys_cpu_num; i++) {
+				pcpu_nums = get_pcpu_nums();
+				for (i = 0U; i < pcpu_nums; i++) {
 					per_cpu(npk_log_ref, i) = 0U;
 				}
 			}
@@ -90,7 +125,7 @@ void npk_log_write(const char *buf, size_t buf_len)
 	uint32_t cpu_id = get_cpu_id();
 	struct npk_chan *channel = (struct npk_chan *)base;
 	const char *p = buf;
-	int sz;
+	int32_t sz;
 	uint32_t ref;
 	uint16_t len;
 

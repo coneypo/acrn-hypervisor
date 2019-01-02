@@ -18,7 +18,7 @@ void destroy_ept(struct acrn_vm *vm)
 	}
 
 	if (vm->arch_vm.nworld_eptp != NULL) {
-		(void)memset(vm->arch_vm.nworld_eptp, 0U, CPU_PAGE_SIZE);
+		(void)memset(vm->arch_vm.nworld_eptp, 0U, PAGE_SIZE);
 	}
 }
 
@@ -26,7 +26,8 @@ void destroy_ept(struct acrn_vm *vm)
 uint64_t local_gpa2hpa(struct acrn_vm *vm, uint64_t gpa, uint32_t *size)
 {
 	uint64_t hpa = INVALID_HPA;
-	uint64_t *pgentry, pg_size = 0UL;
+	const uint64_t *pgentry;
+	uint64_t pg_size = 0UL;
 	void *eptp;
 	struct acrn_vcpu *vcpu = vcpu_from_pid(vm, get_cpu_id());
 
@@ -71,9 +72,9 @@ uint64_t vm0_hpa2gpa(uint64_t hpa)
 	return hpa;
 }
 
-int ept_violation_vmexit_handler(struct acrn_vcpu *vcpu)
+int32_t ept_violation_vmexit_handler(struct acrn_vcpu *vcpu)
 {
-	int status = -EINVAL, ret;
+	int32_t status = -EINVAL, ret;
 	uint64_t exit_qual;
 	uint64_t gpa;
 	struct io_request *io_req = &vcpu->req;
@@ -115,52 +116,47 @@ int ept_violation_vmexit_handler(struct acrn_vcpu *vcpu)
 	ret = decode_instruction(vcpu);
 	if (ret > 0) {
 		mmio_req->size = (uint64_t)ret;
-	} else if (ret == -EFAULT) {
-		pr_info("page fault happen during decode_instruction");
-		status = 0;
-		goto out;
+		/*
+		 * For MMIO write, ask DM to run MMIO emulation after
+		 * instruction emulation. For MMIO read, ask DM to run MMIO
+		 * emulation at first.
+		 */
+
+		/* Determine value being written. */
+		if (mmio_req->direction == REQUEST_WRITE) {
+			status = emulate_instruction(vcpu);
+			if (status != 0) {
+				ret = -EFAULT;
+			}
+		}
+
+		if (ret > 0) {
+			status = emulate_io(vcpu, io_req);
+			if (status == 0) {
+				emulate_mmio_post(vcpu, io_req);
+			} else {
+				if (status == IOREQ_PENDING) {
+					status = 0;
+				}
+			}
+		}
 	} else {
-		goto out;
-	}
-
-
-	/*
-	 * For MMIO write, ask DM to run MMIO emulation after
-	 * instruction emulation. For MMIO read, ask DM to run MMIO
-	 * emulation at first.
-	 */
-
-	/* Determine value being written. */
-	if (mmio_req->direction == REQUEST_WRITE) {
-		status = emulate_instruction(vcpu);
-		if (status != 0) {
-			goto out;
+		if (ret == -EFAULT) {
+			pr_info("page fault happen during decode_instruction");
+			status = 0;
 		}
 	}
 
-	status = emulate_io(vcpu, io_req);
-
-	if (status == 0) {
-		emulate_mmio_post(vcpu, io_req);
-	} else if (status == IOREQ_PENDING) {
-		status = 0;
+	if (ret <= 0) {
+		pr_acrnlog("Guest Linear Address: 0x%016llx", exec_vmread(VMX_GUEST_LINEAR_ADDR));
+		pr_acrnlog("Guest Physical Address address: 0x%016llx", gpa);
 	}
-
-	return status;
-
-out:
-	pr_acrnlog("Guest Linear Address: 0x%016llx",
-			exec_vmread(VMX_GUEST_LINEAR_ADDR));
-
-	pr_acrnlog("Guest Physical Address address: 0x%016llx",
-			gpa);
-
 	return status;
 }
 
-int ept_misconfig_vmexit_handler(__unused struct acrn_vcpu *vcpu)
+int32_t ept_misconfig_vmexit_handler(__unused struct acrn_vcpu *vcpu)
 {
-	int status;
+	int32_t status;
 
 	status = -EINVAL;
 
@@ -192,7 +188,7 @@ void ept_mr_add(struct acrn_vm *vm, uint64_t *pml4_page,
 	 * to force snooping of PCIe devices if the page
 	 * is cachable
 	 */
-	if ((prot & EPT_MT_MASK) != EPT_UNCACHED) {
+	if (((prot & EPT_MT_MASK) != EPT_UNCACHED) && vm->snoopy_mem) {
 		prot |= EPT_SNOOP_CTRL;
 	}
 
@@ -209,14 +205,15 @@ void ept_mr_modify(struct acrn_vm *vm, uint64_t *pml4_page,
 {
 	struct acrn_vcpu *vcpu;
 	uint16_t i;
+	uint64_t local_prot = prot_set;
 
 	dev_dbg(ACRN_DBG_EPT, "%s,vm[%d] gpa 0x%llx size 0x%llx\n", __func__, vm->vm_id, gpa, size);
 
-	if ((prot_set & EPT_MT_MASK) != EPT_UNCACHED) {
-		prot_set |= EPT_SNOOP_CTRL;
+	if (((local_prot & EPT_MT_MASK) != EPT_UNCACHED) && vm->snoopy_mem) {
+		local_prot |= EPT_SNOOP_CTRL;
 	}
 
-	mmu_modify_or_del(pml4_page, gpa, size, prot_set, prot_clr, &vm->arch_vm.ept_mem_ops, MR_MODIFY);
+	mmu_modify_or_del(pml4_page, gpa, size, local_prot, prot_clr, &(vm->arch_vm.ept_mem_ops), MR_MODIFY);
 
 	foreach_vcpu(i, vm, vcpu) {
 		vcpu_make_request(vcpu, ACRN_REQUEST_EPT_FLUSH);

@@ -11,6 +11,7 @@ Developer Guides
    GVT-g-porting
    trusty
    l1tf
+   modularity
    ../api/index
    ../reference/kconfig/index
 
@@ -26,5 +27,6 @@ project.
    :maxdepth: 1
 
    contribute_guidelines
+   coding_guidelines
    doc_guidelines
    graphviz

@@ -19,19 +19,26 @@ union u_qword {
 
 };
 
+/* MACRO related to string */
+#define ULONG_MAX	((uint64_t)(~0UL))	/* 0xFFFFFFFF */
+#define LONG_MAX	(ULONG_MAX >> 1U)	/* 0x7FFFFFFF */
+#define LONG_MIN	(~LONG_MAX)		/* 0x80000000 */
+
+static inline bool is_space(char c)
+{
+	return ((c == ' ') || (c == '\t'));
+}
+
 /* Function prototypes */
 void udelay(uint32_t us);
-void *memchr(const void *void_s, int c, size_t n);
-int strcmp(const char *s1_arg, const char *s2_arg);
-int strncmp(const char *s1_arg, const char *s2_arg, size_t n_arg);
-char *strcpy_s(char *d_arg, size_t dmax, const char *s_arg);
+int32_t strcmp(const char *s1_arg, const char *s2_arg);
+int32_t strncmp(const char *s1_arg, const char *s2_arg, size_t n_arg);
 char *strncpy_s(char *d_arg, size_t dmax, const char *s_arg, size_t slen_arg);
 char *strchr(char *s_arg, char ch);
 size_t strnlen_s(const char *str_arg, size_t maxlen_arg);
 void *memset(void *base, uint8_t v, size_t n);
-void *memcpy_s(void *d, size_t dmax, const void *s, size_t slen_arg);
-int atoi(const char *str);
-long strtol_deci(const char *nptr);
+void *memcpy_s(void *d, size_t dmax, const void *s, size_t slen);
+int64_t strtol_deci(const char *nptr);
 uint64_t strtoul_hex(const char *nptr);
 char *strstr_s(const char *str1, size_t maxlen1,
 			const char *str2, size_t maxlen2);

@@ -5,6 +5,10 @@
  */
 
 #include <hypervisor.h>
+#include <init.h>
+
+#define CALL_TRACE_HIERARCHY_MAX    20U
+#define DUMP_STACK_SIZE 0x200U
 
 /*
  * readable exception descriptors.
@@ -130,7 +134,7 @@ static void show_guest_call_trace(struct acrn_vcpu *vcpu)
 {
 	uint64_t bp;
 	uint64_t count = 0UL;
-	int err;
+	int32_t err;
 	uint32_t err_code;
 
 	bp = vcpu_get_gpreg(vcpu, CPU_REG_RBP);
@@ -243,7 +247,7 @@ void asm_assert(int32_t line, const char *file, const char *txt)
 	show_host_call_trace(rsp, rbp, pcpu_id);
 	dump_guest_context(pcpu_id);
 	do {
-		pause_cpu();
+		asm_pause();
 	} while (1);
 }
 

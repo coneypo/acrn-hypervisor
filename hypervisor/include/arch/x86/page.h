@@ -8,7 +8,8 @@
 #define PAGE_H
 
 #define PAGE_SHIFT	12U
-#define PAGE_SIZE	(1UL << PAGE_SHIFT)
+#define PAGE_SIZE	(1U << PAGE_SHIFT)
+#define PAGE_MASK	0xFFFFFFFFFFFFF000UL
 
 /* size of the low MMIO address space: 2GB */
 #define PLATFORM_LO_MMIO_SIZE	0x80000000UL
@@ -19,7 +20,7 @@
 #define PT_PAGE_NUM(size)	(((size) + PDE_SIZE - 1UL) >> PDE_SHIFT)
 
 /* The size of the guest physical address space, covered by the EPT page table of a VM */
-#define EPT_ADDRESS_SPACE(size)	((size != 0UL) ? (size + PLATFORM_LO_MMIO_SIZE) : 0UL)
+#define EPT_ADDRESS_SPACE(size)	(((size) != 0UL) ? ((size) + PLATFORM_LO_MMIO_SIZE) : 0UL)
 
 #define TRUSTY_PML4_PAGE_NUM(size)	(1UL)
 #define TRUSTY_PDPT_PAGE_NUM(size)	(1UL)
@@ -27,6 +28,8 @@
 #define TRUSTY_PT_PAGE_NUM(size)	(PT_PAGE_NUM(size))
 #define TRUSTY_PGTABLE_PAGE_NUM(size)	\
 (TRUSTY_PML4_PAGE_NUM(size) + TRUSTY_PDPT_PAGE_NUM(size) + TRUSTY_PD_PAGE_NUM(size) + TRUSTY_PT_PAGE_NUM(size))
+
+struct acrn_vm;
 
 struct page {
 	uint8_t contents[PAGE_SIZE];
@@ -46,6 +49,7 @@ union pgtable_pages_info {
 		struct page *nworld_pd_base;
 		struct page *nworld_pt_base;
 		struct page *sworld_pgtable_base;
+		struct page *sworld_memory_base;
 	} ept;
 };
 
@@ -53,13 +57,15 @@ struct memory_ops {
 	union pgtable_pages_info *info;
 	uint64_t (*get_default_access_right)(void);
 	uint64_t (*pgentry_present)(uint64_t pte);
-	struct page *(*get_pml4_page)(const union pgtable_pages_info *info, uint64_t gpa);
+	struct page *(*get_pml4_page)(const union pgtable_pages_info *info);
 	struct page *(*get_pdpt_page)(const union pgtable_pages_info *info, uint64_t gpa);
 	struct page *(*get_pd_page)(const union pgtable_pages_info *info, uint64_t gpa);
 	struct page *(*get_pt_page)(const union pgtable_pages_info *info, uint64_t gpa);
+	void *(*get_sworld_memory_base)(const union pgtable_pages_info *info);
 };
 
 extern const struct memory_ops ppt_mem_ops;
 void init_ept_mem_ops(struct acrn_vm *vm);
+void *get_reserve_sworld_memory_base(void);
 
 #endif /* PAGE_H */

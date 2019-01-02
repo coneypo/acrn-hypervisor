@@ -170,54 +170,52 @@ static void profiling_disable_pmu(void)
 	dev_dbg(ACRN_DBG_PROFILING, "%s: entering cpu%d",
 		__func__,  get_cpu_id());
 
-	if (ss == NULL) {
-		dev_dbg(ACRN_ERR_PROFILING, "%s: exiting cpu%d",
-			__func__, get_cpu_id());
-		return;
-	}
+	if (ss != NULL) {
+		if (ss->vmexit_msr_cnt == 1) {
+			/* Set the VM Exit MSR Load in VMCS */
+			exec_vmwrite(VMX_EXIT_MSR_LOAD_COUNT, 0x0U);
+				exec_vmwrite64(VMX_GUEST_IA32_DEBUGCTL_FULL,
+				ss->saved_debugctl_value);
 
-	if (ss->vmexit_msr_cnt == 1) {
-		/* Set the VM Exit MSR Load in VMCS */
-		exec_vmwrite(VMX_EXIT_MSR_LOAD_COUNT, 0x0U);
-		exec_vmwrite64(VMX_GUEST_IA32_DEBUGCTL_FULL,
-			ss->saved_debugctl_value);
+			ss->vmexit_msr_cnt = 0;
+		}
 
-		ss->vmexit_msr_cnt = 0;
-	}
-
-	group_id = ss->current_pmi_group_id;
-	for (i = 0U; i < MAX_MSR_LIST_NUM; i++) {
-		msrop = &(ss->pmi_stop_msr_list[group_id][i]);
-		if (msrop != NULL) {
-			if (msrop->msr_id == (uint32_t)-1) {
-				break;
-			}
-			if (msrop->msr_op_type == (uint8_t)MSR_OP_WRITE) {
-				msr_write(msrop->msr_id, msrop->value);
-				dev_dbg(ACRN_DBG_PROFILING,
-				"%s: MSRWRITE cpu%d, msr_id=0x%x, msr_val=0x%llx",
-				__func__, get_cpu_id(), msrop->msr_id, msrop->value);
+		group_id = ss->current_pmi_group_id;
+		for (i = 0U; i < MAX_MSR_LIST_NUM; i++) {
+			msrop = &(ss->pmi_stop_msr_list[group_id][i]);
+			if (msrop != NULL) {
+				if (msrop->msr_id == (uint32_t)-1) {
+					break;
+				}
+				if (msrop->msr_op_type == (uint8_t)MSR_OP_WRITE) {
+					msr_write(msrop->msr_id, msrop->value);
+					dev_dbg(ACRN_DBG_PROFILING,
+					"%s: MSRWRITE cpu%d, msr_id=0x%x, msr_val=0x%llx",
+					__func__, get_cpu_id(), msrop->msr_id, msrop->value);
+				}
 			}
 		}
+
+		/* Mask LAPIC LVT entry for PMC register */
+		lvt_perf_ctr = (uint32_t) msr_read(MSR_IA32_EXT_APIC_LVT_PMI);
+
+		lvt_perf_ctr |= LVT_PERFCTR_BIT_MASK;
+		msr_write(MSR_IA32_EXT_APIC_LVT_PMI, lvt_perf_ctr);
+
+		ss->pmu_state = PMU_SETUP;
+
+		dev_dbg(ACRN_DBG_PROFILING, "%s: exiting cpu%d",
+			__func__,  get_cpu_id());
+	} else {
+		dev_dbg(ACRN_ERR_PROFILING, "%s: exiting cpu%d",
+			__func__, get_cpu_id());
 	}
-
-	/* Mask LAPIC LVT entry for PMC register */
-	lvt_perf_ctr = (uint32_t) msr_read(MSR_IA32_EXT_APIC_LVT_PMI);
-
-	lvt_perf_ctr |= LVT_PERFCTR_BIT_MASK;
-	msr_write(MSR_IA32_EXT_APIC_LVT_PMI, lvt_perf_ctr);
-
-
-	ss->pmu_state = PMU_SETUP;
-
-	dev_dbg(ACRN_DBG_PROFILING, "%s: exiting cpu%d",
-		__func__,  get_cpu_id());
 }
 
 /*
  * Writes specified size of data into sbuf
  */
-static int profiling_sbuf_put_variable(struct shared_buf *sbuf,
+static int32_t profiling_sbuf_put_variable(struct shared_buf *sbuf,
 					uint8_t *data, uint32_t size)
 {
 	uint32_t remaining_space, offset, next_tail;
@@ -237,14 +235,14 @@ static int profiling_sbuf_put_variable(struct shared_buf *sbuf,
 	 * 5. return number of bytes of data put in buffer
 	 */
 
+	stac();
 	if ((sbuf == NULL) || (data == NULL)) {
-		dev_dbg(ACRN_DBG_PROFILING, "buffer or data not initialized!");
+		clac();
 		return -EINVAL;
 	}
 
 	if (size == 0U) {
-		dev_dbg(ACRN_DBG_PROFILING,
-			"0 bytes reqeusted to be put in buffer!");
+		clac();
 		return 0;
 	}
 
@@ -259,48 +257,44 @@ static int profiling_sbuf_put_variable(struct shared_buf *sbuf,
 		 * Since if the next_tail equals head, then it is assumed
 		 * that buffer is empty, not full
 		 */
-		dev_dbg(ACRN_DBG_PROFILING,
-		"Not enough space to write data! Returning without writing");
+		clac();
 		return 0;
 	}
 
 	next_tail = sbuf_next_ptr(sbuf->tail, size, sbuf->size);
-	dev_dbg(ACRN_DBG_PROFILING, "sbuf->tail: %llu, next_tail: %llu",
-		sbuf->tail, next_tail);
 
 	to = (void *)sbuf + SBUF_HEAD_SIZE + sbuf->tail;
 
 	if (next_tail < sbuf->tail) { /* wrap-around */
-		dev_dbg(ACRN_DBG_PROFILING, "wrap-around condition!");
 		offset = sbuf->size - sbuf->tail;
 		(void)memcpy_s(to, offset, data, offset);
 
 		/* 2nd part */
 		to = (void *)sbuf + SBUF_HEAD_SIZE;
 
-		if (size - offset > 0U) {
+		if ((size - offset) > 0U) {
 			(void)memcpy_s(to, size - offset,
 				data + offset, size - offset);
 		}
 	} else {
-		dev_dbg(ACRN_DBG_PROFILING, "non-wrap-around!");
 		(void)memcpy_s(to, size, data, size);
 	}
 
 	sbuf->tail = next_tail;
+	clac();
 
-	return (int)size;
+	return (int32_t)size;
 }
 
 /*
  * Read profiling data and transferred to SOS
  * Drop transfer of profiling data if sbuf is full/insufficient and log it
  */
-static int profiling_generate_data(int32_t collector, uint32_t type)
+static int32_t profiling_generate_data(int32_t collector, uint32_t type)
 {
 	uint64_t i;
 	uint32_t remaining_space = 0U;
-	int 	ret = 0;
+	int32_t 	ret = 0;
 	struct data_header pkt_header;
 	uint64_t payload_size = 0UL;
 	void *payload = NULL;
@@ -308,6 +302,8 @@ static int profiling_generate_data(int32_t collector, uint32_t type)
 	struct sep_state *ss = &(get_cpu_var(profiling_info.sep_state));
 	struct sw_msr_op_info *sw_msrop
 		= &(get_cpu_var(profiling_info.sw_msr_op_info));
+	uint64_t rflags;
+	spinlock_t *sw_lock = NULL;
 
 	dev_dbg(ACRN_DBG_PROFILING, "%s: entering cpu%d",
 		__func__,  get_cpu_id());
@@ -324,12 +320,14 @@ static int profiling_generate_data(int32_t collector, uint32_t type)
 		}
 
 		if (ss->pmu_state == PMU_RUNNING) {
+			stac();
 			if (sbuf->tail >= sbuf->head) {
 				remaining_space = sbuf->size
 						- (sbuf->tail - sbuf->head);
 			} else {
 				remaining_space = sbuf->head - sbuf->tail;
 			}
+			clac();
 
 			/* populate the data header */
 			pkt_header.tsc = rdtsc();
@@ -372,12 +370,12 @@ static int profiling_generate_data(int32_t collector, uint32_t type)
 				return 0;
 			}
 
-			for (i = 0U; i < ((DATA_HEADER_SIZE - 1U) / SEP_BUF_ENTRY_SIZE + 1U); i++) {
+			for (i = 0U; i < (((DATA_HEADER_SIZE - 1U) / SEP_BUF_ENTRY_SIZE) + 1U); i++) {
 				(void)sbuf_put((struct shared_buf *)sbuf,
 					(uint8_t *)&pkt_header + i * SEP_BUF_ENTRY_SIZE);
 			}
 
-			for (i = 0U; i < ((payload_size - 1U) / SEP_BUF_ENTRY_SIZE + 1U); i++) {
+			for (i = 0U; i < (((payload_size - 1U) / SEP_BUF_ENTRY_SIZE) + 1U); i++) {
 				(void)sbuf_put((struct shared_buf *)sbuf,
 					(uint8_t *)payload + i * SEP_BUF_ENTRY_SIZE);
 			}
@@ -395,12 +393,16 @@ static int profiling_generate_data(int32_t collector, uint32_t type)
 			return 0;
 		}
 
+		sw_lock = &(get_cpu_var(profiling_info.sw_lock));
+		spinlock_irqsave_obtain(sw_lock, &rflags);
+		stac();
 		if (sbuf->tail >= sbuf->head) {
 			remaining_space
 				= sbuf->size - (sbuf->tail - sbuf->head);
 		} else {
 			remaining_space = sbuf->head - sbuf->tail;
 		}
+		clac();
 
 		/* populate the data header */
 		pkt_header.tsc = rdtsc();
@@ -450,6 +452,7 @@ static int profiling_generate_data(int32_t collector, uint32_t type)
 		(void)profiling_sbuf_put_variable((struct shared_buf *)sbuf,
 			(uint8_t *)payload, (uint32_t)payload_size);
 
+		spinlock_irqrestore_release(sw_lock, rflags);
 	} else {
 		dev_dbg(ACRN_ERR_PROFILING,
 			"%s: Unknown collector type", __func__);
@@ -562,7 +565,7 @@ static void profiling_handle_msrops(void)
 /*
  * Interrupt handler for performance monitoring interrupts
  */
-static void profiling_pmi_handler(unsigned int irq, __unused void *data)
+static void profiling_pmi_handler(uint32_t irq, __unused void *data)
 {
 	uint64_t perf_ovf_status;
 	uint32_t lvt_perf_ctr;
@@ -712,9 +715,10 @@ reconfig:
 /*
  * Initialize sep state and enable PMU counters
  */
-void profiling_start_pmu(void)
+static void profiling_start_pmu(void)
 {
 	uint16_t i;
+	uint16_t pcpu_nums = get_pcpu_nums();
 
 	dev_dbg(ACRN_DBG_PROFILING, "%s: entering", __func__);
 
@@ -722,7 +726,7 @@ void profiling_start_pmu(void)
 		return;
 	}
 
-	for (i = 0U; i < phys_cpu_num; i++) {
+	for (i = 0U; i < pcpu_nums; i++) {
 		if (per_cpu(profiling_info.sep_state, i).pmu_state != PMU_SETUP) {
 			pr_err("%s: invalid pmu_state %u on cpu%d",
 			__func__, get_cpu_var(profiling_info.sep_state).pmu_state, i);
@@ -730,7 +734,7 @@ void profiling_start_pmu(void)
 		}
 	}
 
-	for (i = 0U; i < phys_cpu_num; i++) {
+	for (i = 0U; i < pcpu_nums; i++) {
 		per_cpu(profiling_info.ipi_cmd, i) = IPI_PMU_START;
 		per_cpu(profiling_info.sep_state, i).samples_logged = 0U;
 		per_cpu(profiling_info.sep_state, i).samples_dropped = 0U;
@@ -743,7 +747,7 @@ void profiling_start_pmu(void)
 		per_cpu(profiling_info.sep_state, i).pmu_state = PMU_RUNNING;
 	}
 
-	smp_call_function(pcpu_active_bitmap, profiling_ipi_handler, NULL);
+	smp_call_function(get_active_pcpu_bitmap(), profiling_ipi_handler, NULL);
 
 	in_pmu_profiling = true;
 
@@ -753,54 +757,54 @@ void profiling_start_pmu(void)
 /*
  * Reset sep state and Disable all the PMU counters
  */
-void profiling_stop_pmu(void)
+static void profiling_stop_pmu(void)
 {
 	uint16_t i;
+	uint16_t pcpu_nums = get_pcpu_nums();
 
 	dev_dbg(ACRN_DBG_PROFILING, "%s: entering", __func__);
 
-	if (!in_pmu_profiling) {
-		return;
-	}
+	if (in_pmu_profiling) {
+		for (i = 0U; i < pcpu_nums; i++) {
+			per_cpu(profiling_info.ipi_cmd, i) = IPI_PMU_STOP;
+			if (per_cpu(profiling_info.sep_state, i).pmu_state == PMU_RUNNING) {
+				per_cpu(profiling_info.sep_state, i).pmu_state = PMU_SETUP;
+			}
 
-	for (i = 0U; i < phys_cpu_num; i++) {
-		per_cpu(profiling_info.ipi_cmd, i) = IPI_PMU_STOP;
-		if (per_cpu(profiling_info.sep_state, i).pmu_state == PMU_RUNNING) {
-			per_cpu(profiling_info.sep_state, i).pmu_state = PMU_SETUP;
+			dev_dbg(ACRN_DBG_PROFILING,
+			"%s: pmi_cnt[%d] = total:%u valid=%u, vmexit_cnt=%u",
+			__func__, i, per_cpu(profiling_info.sep_state, i).total_pmi_count,
+			per_cpu(profiling_info.sep_state, i).valid_pmi_count,
+			per_cpu(profiling_info.sep_state, i).total_vmexit_count);
+
+			dev_dbg(ACRN_DBG_PROFILING,
+			"%s: cpu%d frozen well:%u frozen delayed=%u, nofrozen_pmi=%u",
+			__func__, i, per_cpu(profiling_info.sep_state, i).frozen_well,
+			per_cpu(profiling_info.sep_state, i).frozen_delayed,
+			per_cpu(profiling_info.sep_state, i).nofrozen_pmi);
+
+			dev_dbg(ACRN_DBG_PROFILING,
+			"%s: cpu%d samples captured:%u samples dropped=%u",
+			__func__, i, per_cpu(profiling_info.sep_state, i).samples_logged,
+			per_cpu(profiling_info.sep_state, i).samples_dropped);
+
+			per_cpu(profiling_info.sep_state, i).samples_logged = 0U;
+			per_cpu(profiling_info.sep_state, i).samples_dropped = 0U;
+			per_cpu(profiling_info.sep_state, i).valid_pmi_count = 0U;
+			per_cpu(profiling_info.sep_state, i).total_pmi_count = 0U;
+			per_cpu(profiling_info.sep_state, i).total_vmexit_count = 0U;
+			per_cpu(profiling_info.sep_state, i).frozen_well = 0U;
+			per_cpu(profiling_info.sep_state, i).frozen_delayed = 0U;
+			per_cpu(profiling_info.sep_state, i).nofrozen_pmi = 0U;
 		}
 
-		dev_dbg(ACRN_DBG_PROFILING,
-		"%s: pmi_cnt[%d] = total:%u valid=%u, vmexit_cnt=%u",
-		__func__, i, per_cpu(profiling_info.sep_state, i).total_pmi_count,
-		per_cpu(profiling_info.sep_state, i).valid_pmi_count,
-		per_cpu(profiling_info.sep_state, i).total_vmexit_count);
+		smp_call_function(get_active_pcpu_bitmap(), profiling_ipi_handler, NULL);
 
-		dev_dbg(ACRN_DBG_PROFILING,
-		"%s: cpu%d frozen well:%u frozen delayed=%u, nofrozen_pmi=%u",
-		__func__, i, per_cpu(profiling_info.sep_state, i).frozen_well,
-		per_cpu(profiling_info.sep_state, i).frozen_delayed,
-		per_cpu(profiling_info.sep_state, i).nofrozen_pmi);
+		in_pmu_profiling = false;
 
-		dev_dbg(ACRN_DBG_PROFILING,
-		"%s: cpu%d samples captured:%u samples dropped=%u",
-		__func__, i, per_cpu(profiling_info.sep_state, i).samples_logged,
-		per_cpu(profiling_info.sep_state, i).samples_dropped);
-
-		per_cpu(profiling_info.sep_state, i).samples_logged = 0U;
-		per_cpu(profiling_info.sep_state, i).samples_dropped = 0U;
-		per_cpu(profiling_info.sep_state, i).valid_pmi_count = 0U;
-		per_cpu(profiling_info.sep_state, i).total_pmi_count = 0U;
-		per_cpu(profiling_info.sep_state, i).total_vmexit_count = 0U;
-		per_cpu(profiling_info.sep_state, i).frozen_well = 0U;
-		per_cpu(profiling_info.sep_state, i).frozen_delayed = 0U;
-		per_cpu(profiling_info.sep_state, i).nofrozen_pmi = 0U;
+		dev_dbg(ACRN_DBG_PROFILING, "%s: done.", __func__);
 	}
 
-	smp_call_function(pcpu_active_bitmap, profiling_ipi_handler, NULL);
-
-	in_pmu_profiling = false;
-
-	dev_dbg(ACRN_DBG_PROFILING, "%s: done.", __func__);
 }
 
 
@@ -810,7 +814,8 @@ void profiling_stop_pmu(void)
 int32_t profiling_msr_ops_all_cpus(struct acrn_vm *vm, uint64_t addr)
 {
 	uint16_t i;
-	struct profiling_msr_ops_list msr_list[phys_cpu_num];
+	uint16_t pcpu_nums = get_pcpu_nums();
+	struct profiling_msr_ops_list msr_list[pcpu_nums];
 
 	(void)memset((void *)&msr_list, 0U, sizeof(msr_list));
 
@@ -821,12 +826,12 @@ int32_t profiling_msr_ops_all_cpus(struct acrn_vm *vm, uint64_t addr)
 		return -EINVAL;
 	}
 
-	for (i = 0U; i < phys_cpu_num; i++) {
+	for (i = 0U; i < pcpu_nums; i++) {
 		per_cpu(profiling_info.ipi_cmd, i) = IPI_MSR_OP;
 		per_cpu(profiling_info.msr_node, i) = &(msr_list[i]);
 	}
 
-	smp_call_function(pcpu_active_bitmap, profiling_ipi_handler, NULL);
+	smp_call_function(get_active_pcpu_bitmap(), profiling_ipi_handler, NULL);
 
 	if (copy_to_gpa(vm, &msr_list, addr, sizeof(msr_list)) != 0) {
 		pr_err("%s: Unable to copy addr from vm\n", __func__);
@@ -847,6 +852,7 @@ int32_t profiling_vm_list_info(struct acrn_vm *vm, uint64_t addr)
 	int32_t vm_idx;
 	uint16_t i, j;
 	struct profiling_vm_info_list vm_info_list;
+	uint16_t pcpu_nums = get_pcpu_nums();
 
 	(void)memset((void *)&vm_info_list, 0U, sizeof(vm_info_list));
 
@@ -860,7 +866,7 @@ int32_t profiling_vm_list_info(struct acrn_vm *vm, uint64_t addr)
 	vm_idx = 0;
 	vm_info_list.vm_list[vm_idx].vm_id_num = -1;
 	(void)memcpy_s((void *)vm_info_list.vm_list[vm_idx].vm_name, 4U, "VMM\0", 4U);
-	for (i = 0U; i < phys_cpu_num; i++) {
+	for (i = 0U; i < pcpu_nums; i++) {
 		vm_info_list.vm_list[vm_idx].cpu_map[i].vcpu_id = (int32_t)i;
 		vm_info_list.vm_list[vm_idx].cpu_map[i].pcpu_id = (int32_t)i;
 		vm_info_list.vm_list[vm_idx].cpu_map[i].apic_id
@@ -983,7 +989,7 @@ int32_t profiling_set_control(struct acrn_vm *vm, uint64_t addr)
 	uint64_t old_switch;
 	uint64_t new_switch;
 	uint16_t i;
-
+	uint16_t pcpu_nums = get_pcpu_nums();
 	struct profiling_control prof_control;
 
 	(void)memset((void *)&prof_control, 0U, sizeof(prof_control));
@@ -1060,7 +1066,7 @@ int32_t profiling_set_control(struct acrn_vm *vm, uint64_t addr)
 					}
 				}
 			}
-			for (i = 0U; i < phys_cpu_num; i++) {
+			for (i = 0U; i < pcpu_nums ; i++) {
 				per_cpu(profiling_info.soc_state, i)
 					= SW_RUNNING;
 			}
@@ -1068,7 +1074,7 @@ int32_t profiling_set_control(struct acrn_vm *vm, uint64_t addr)
 			dev_dbg(ACRN_DBG_PROFILING,
 			"%s: socwatch stop collection invoked or collection switch not set!",
 			__func__);
-			for (i = 0U; i < phys_cpu_num; i++) {
+			for (i = 0U; i < pcpu_nums ; i++) {
 				per_cpu(profiling_info.soc_state, i)
 					= SW_STOPPED;
 			}
@@ -1097,6 +1103,7 @@ int32_t profiling_configure_pmi(struct acrn_vm *vm, uint64_t addr)
 {
 	uint16_t i;
 	struct profiling_pmi_config pmi_config;
+	uint16_t pcpu_nums = get_pcpu_nums();
 
 	(void)memset((void *)&pmi_config, 0U, sizeof(pmi_config));
 
@@ -1107,7 +1114,7 @@ int32_t profiling_configure_pmi(struct acrn_vm *vm, uint64_t addr)
 		return -EINVAL;
 	}
 
-	for (i = 0U; i < phys_cpu_num; i++) {
+	for (i = 0U; i < pcpu_nums; i++) {
 		if (!((per_cpu(profiling_info.sep_state, i).pmu_state ==
 				PMU_INITIALIZED) ||
 			(per_cpu(profiling_info.sep_state, i).pmu_state ==
@@ -1125,7 +1132,7 @@ int32_t profiling_configure_pmi(struct acrn_vm *vm, uint64_t addr)
 		return -EINVAL;
 	}
 
-	for (i = 0U; i < phys_cpu_num; i++) {
+	for (i = 0U; i < pcpu_nums; i++) {
 		per_cpu(profiling_info.ipi_cmd, i) = IPI_PMU_CONFIG;
 		per_cpu(profiling_info.sep_state, i).num_pmi_groups
 			= pmi_config.num_groups;
@@ -1156,7 +1163,7 @@ int32_t profiling_configure_pmi(struct acrn_vm *vm, uint64_t addr)
 		sizeof(struct profiling_msr_op)*MAX_MSR_LIST_NUM*MAX_GROUP_NUM);
 	}
 
-	smp_call_function(pcpu_active_bitmap, profiling_ipi_handler, NULL);
+	smp_call_function(get_active_pcpu_bitmap(), profiling_ipi_handler, NULL);
 
 	if (copy_to_gpa(vm, &pmi_config, addr, sizeof(pmi_config)) != 0) {
 		pr_err("%s: Unable to copy addr to vm\n", __func__);
@@ -1175,6 +1182,7 @@ int32_t profiling_configure_vmsw(struct acrn_vm *vm, uint64_t addr)
 	uint16_t i;
 	int32_t ret = 0;
 	struct profiling_vmsw_config vmsw_config;
+	uint16_t pcpu_nums = get_pcpu_nums();
 
 	(void)memset((void *)&vmsw_config, 0U, sizeof(vmsw_config));
 
@@ -1187,7 +1195,7 @@ int32_t profiling_configure_vmsw(struct acrn_vm *vm, uint64_t addr)
 
 	switch (vmsw_config.collector_id) {
 	case COLLECT_PROFILE_DATA:
-		for (i = 0U; i < phys_cpu_num; i++) {
+		for (i = 0U; i < pcpu_nums; i++) {
 			per_cpu(profiling_info.ipi_cmd, i) = IPI_VMSW_CONFIG;
 
 			(void)memcpy_s(
@@ -1209,7 +1217,7 @@ int32_t profiling_configure_vmsw(struct acrn_vm *vm, uint64_t addr)
 			sizeof(struct profiling_msr_op)*MAX_MSR_LIST_NUM);
 		}
 
-		smp_call_function(pcpu_active_bitmap, profiling_ipi_handler, NULL);
+		smp_call_function(get_active_pcpu_bitmap(), profiling_ipi_handler, NULL);
 
 		break;
 	case COLLECT_POWER_DATA:
@@ -1308,15 +1316,18 @@ void profiling_vmenter_handler(__unused struct acrn_vcpu *vcpu)
 /*
  * Save the VCPU info on vmexit
  */
-void profiling_vmexit_handler(struct acrn_vcpu *vcpu, uint64_t exit_reason)
+void profiling_pre_vmexit_handler(struct acrn_vcpu *vcpu)
 {
-	per_cpu(profiling_info.sep_state, vcpu->pcpu_id).total_vmexit_count++;
+	uint64_t exit_reason = 0UL;
+
+	exit_reason = vcpu->arch.exit_reason & 0xFFFFUL;
 
 	if ((get_cpu_var(profiling_info.sep_state).pmu_state == PMU_RUNNING) ||
 		(get_cpu_var(profiling_info.soc_state) == SW_RUNNING)) {
 
 		get_cpu_var(profiling_info.vm_info).vmexit_tsc = rdtsc();
-		get_cpu_var(profiling_info.vm_info).vmexit_reason = exit_reason;
+		get_cpu_var(profiling_info.vm_info).vmexit_reason
+			= exit_reason;
 		if (exit_reason == VMX_EXIT_REASON_EXTERNAL_INTERRUPT) {
 			get_cpu_var(profiling_info.vm_info).external_vector
 				= (int32_t)(exec_vmread(VMX_EXIT_INT_INFO) & 0xFFUL);
@@ -1333,6 +1344,18 @@ void profiling_vmexit_handler(struct acrn_vcpu *vcpu, uint64_t exit_reason)
 			= exec_vmread64(VMX_GUEST_CS_SEL);
 
 		get_cpu_var(profiling_info.vm_info).guest_vm_id = (int32_t)vcpu->vm->vm_id;
+	}
+}
+
+/*
+ * Generate vmexit data
+ */
+void profiling_post_vmexit_handler(struct acrn_vcpu *vcpu)
+{
+	per_cpu(profiling_info.sep_state, vcpu->pcpu_id).total_vmexit_count++;
+
+	if ((get_cpu_var(profiling_info.sep_state).pmu_state == PMU_RUNNING) ||
+		(get_cpu_var(profiling_info.soc_state) == SW_RUNNING)) {
 
 		/* Generate vmswitch sample */
 		if (((sep_collection_switch &
@@ -1346,7 +1369,7 @@ void profiling_vmexit_handler(struct acrn_vcpu *vcpu, uint64_t exit_reason)
 			get_cpu_var(profiling_info.vm_switch_trace).vm_exit_tsc
 				= get_cpu_var(profiling_info.vm_info).vmexit_tsc;
 			get_cpu_var(profiling_info.vm_switch_trace).vm_exit_reason
-				= exit_reason;
+				= get_cpu_var(profiling_info.vm_info).vmexit_reason;
 
 			if ((sep_collection_switch &
 					(1UL << (uint64_t)VM_SWITCH_TRACING)) > 0UL) {

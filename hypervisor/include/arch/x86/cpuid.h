@@ -72,6 +72,10 @@
 #define CPUID_EDX_PBE           (1U<<31U)
 /* CPUID.07H:EBX.TSC_ADJUST*/
 #define CPUID_EBX_TSC_ADJ       (1U<<1U)
+/* CPUID.07H:EBX.SGX */
+#define CPUID_EBX_SGX           (1U<<2U)
+/* CPUID.07H:ECX.SGX_LC*/
+#define CPUID_ECX_SGX_LC        (1U<<30U)
 /* CPUID.07H:EDX.IBRS_IBPB*/
 #define CPUID_EDX_IBRS_IBPB     (1U<<26U)
 /* CPUID.07H:EDX.STIBP*/
@@ -84,6 +88,8 @@
 #define CPUID_EBX_PQM           (1U<<12U)
 /* CPUID.07H:EBX.PQE */
 #define CPUID_EBX_PQE           (1U<<15U)
+/* CPUID.07H:EBX.INTEL_PROCESSOR_TRACE */
+#define CPUID_EBX_PROC_TRC      (1U<<25U)
 /* CPUID.01H:ECX.PCID*/
 #define CPUID_ECX_PCID          (1U<<17U)
 
@@ -130,10 +136,5 @@ static inline void cpuid_subleaf(uint32_t leaf, uint32_t subleaf,
 
 	asm_cpuid(eax, ebx, ecx, edx);
 }
-
-int set_vcpuid_entries(struct acrn_vm *vm);
-void guest_cpuid(struct acrn_vcpu *vcpu,
-			uint32_t *eax, uint32_t *ebx,
-			uint32_t *ecx, uint32_t *edx);
 
 #endif /* CPUID_H_ */

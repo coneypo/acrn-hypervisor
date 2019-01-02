@@ -53,16 +53,18 @@ struct vmctx {
 	int     ioreq_client;
 	uint32_t lowmem_limit;
 	size_t  lowmem;
+	size_t  biosmem;
 	size_t  highmem;
 	char    *baseaddr;
 	char    *name;
-	uuid_t	vm_uuid;
+	uuid_t  vm_uuid;
 
 	/* fields to track virtual devices */
 	void *atkbdc_base;
 	void *vrtc;
 	void *vpit;
 	void *ioc_dev;
+	void *tpm_dev;
 
 	/* BSP state. guest loader needs to fill it */
 	struct acrn_set_vcpu_regs bsp_regs;
@@ -96,6 +98,7 @@ int	vm_create_ioreq_client(struct vmctx *ctx);
 int	vm_destroy_ioreq_client(struct vmctx *ctx);
 int	vm_attach_ioreq_client(struct vmctx *ctx);
 int	vm_notify_request_done(struct vmctx *ctx, int vcpu);
+void	vm_clear_ioreq(struct vmctx *ctx);
 void	vm_set_suspend_mode(enum vm_suspend_how how);
 int	vm_get_suspend_mode(void);
 void	vm_destroy(struct vmctx *ctx);

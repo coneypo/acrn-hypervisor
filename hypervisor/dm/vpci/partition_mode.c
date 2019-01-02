@@ -32,11 +32,11 @@
 #include <hypervisor.h>
 #include "pci_priv.h"
 
-static struct pci_vdev *partition_mode_find_vdev(struct vpci *vpci, union pci_bdf vbdf)
+static struct pci_vdev *partition_mode_find_vdev(struct acrn_vpci *vpci, union pci_bdf vbdf)
 {
 	struct vpci_vdev_array *vdev_array;
 	struct pci_vdev *vdev;
-	int i;
+	int32_t i;
 
 	vdev_array = vpci->vm->vm_desc->vpci_vdev_array;
 	for (i = 0; i < vdev_array->num_pci_vdev; i++) {
@@ -49,12 +49,12 @@ static struct pci_vdev *partition_mode_find_vdev(struct vpci *vpci, union pci_bd
 	return NULL;
 }
 
-static int partition_mode_vpci_init(struct acrn_vm *vm)
+static int32_t partition_mode_vpci_init(struct acrn_vm *vm)
 {
 	struct vpci_vdev_array *vdev_array;
-	struct vpci *vpci = &vm->vpci;
+	struct acrn_vpci *vpci = &vm->vpci;
 	struct pci_vdev *vdev;
-	int i;
+	int32_t i;
 
 	vdev_array = vm->vm_desc->vpci_vdev_array;
 
@@ -77,7 +77,7 @@ static void partition_mode_vpci_deinit(struct acrn_vm *vm)
 {
 	struct vpci_vdev_array *vdev_array;
 	struct pci_vdev *vdev;
-	int i;
+	int32_t i;
 
 	vdev_array = vm->vm_desc->vpci_vdev_array;
 
@@ -91,7 +91,7 @@ static void partition_mode_vpci_deinit(struct acrn_vm *vm)
 	}
 }
 
-static void partition_mode_cfgread(struct vpci *vpci, union pci_bdf vbdf,
+static void partition_mode_cfgread(struct acrn_vpci *vpci, union pci_bdf vbdf,
 	uint32_t offset, uint32_t bytes, uint32_t *val)
 {
 	struct pci_vdev *vdev = partition_mode_find_vdev(vpci, vbdf);
@@ -101,7 +101,7 @@ static void partition_mode_cfgread(struct vpci *vpci, union pci_bdf vbdf,
 	}
 }
 
-static void partition_mode_cfgwrite(struct vpci *vpci, union pci_bdf vbdf,
+static void partition_mode_cfgwrite(struct acrn_vpci *vpci, union pci_bdf vbdf,
 	uint32_t offset, uint32_t bytes, uint32_t val)
 {
 	struct pci_vdev *vdev = partition_mode_find_vdev(vpci, vbdf);
@@ -111,7 +111,7 @@ static void partition_mode_cfgwrite(struct vpci *vpci, union pci_bdf vbdf,
 	}
 }
 
-struct vpci_ops partition_mode_vpci_ops = {
+const struct vpci_ops partition_mode_vpci_ops = {
 	.init = partition_mode_vpci_init,
 	.deinit = partition_mode_vpci_deinit,
 	.cfgread = partition_mode_cfgread,

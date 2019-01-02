@@ -45,6 +45,7 @@
 
 #include <cpu.h>
 #include <page.h>
+#include <pgtable.h>
 
 /* Define cache line size (in bytes) */
 #define CACHE_LINE_SIZE		64U
@@ -53,14 +54,26 @@
 #define IA32E_REF_MASK		\
 		(boot_cpu_data.physical_address_mask)
 
+extern uint8_t ld_text_end;
+
 static inline uint64_t round_page_up(uint64_t addr)
 {
-	return (((addr + (uint64_t)CPU_PAGE_SIZE) - 1UL) & CPU_PAGE_MASK);
+	return (((addr + (uint64_t)PAGE_SIZE) - 1UL) & PAGE_MASK);
 }
 
 static inline uint64_t round_page_down(uint64_t addr)
 {
-	return (addr & CPU_PAGE_MASK);
+	return (addr & PAGE_MASK);
+}
+
+static inline uint64_t round_pde_up(uint64_t val)
+{
+	return (((val + (uint64_t)PDE_SIZE) - 1UL) & PDE_MASK);
+}
+
+static inline uint64_t round_pde_down(uint64_t val)
+{
+	return (val & PDE_MASK);
 }
 
 /**
@@ -104,6 +117,14 @@ void enable_paging(void);
  * @return None
  */
 void enable_smep(void);
+
+/**
+ * @brief Supervisor-mode Access Prevention (SMAP) enable
+ *
+ * @return None
+ */
+void enable_smap(void);
+
 /**
  * @brief MMU page tables initialization
  *
@@ -114,18 +135,13 @@ void mmu_add(uint64_t *pml4_page, uint64_t paddr_base, uint64_t vaddr_base,
 		uint64_t size, uint64_t prot, const struct memory_ops *mem_ops);
 void mmu_modify_or_del(uint64_t *pml4_page, uint64_t vaddr_base, uint64_t size,
 		uint64_t prot_set, uint64_t prot_clr, const struct memory_ops *mem_ops, uint32_t type);
-/**
- * @brief EPT and VPID capability checking
- *
- * @return 0 - on success
- * @return -ENODEV - Don't support EPT or VPID capability
- */
-int check_vmx_mmu_cap(void);
+void hv_access_memory_region_update(uint64_t base, uint64_t size);
+
 /**
  * @brief VPID allocation
  *
- * @return 0 - VPID overflow
- * @return more than 0 - the valid VPID
+ * @retval 0 VPID overflow
+ * @retval >0 the valid VPID
  */
 uint16_t allocate_vpid(void);
 /**
@@ -151,23 +167,10 @@ void flush_vpid_global(void);
  */
 void invept(const struct acrn_vcpu *vcpu);
 /**
- * @brief Host-physical address continous checking
- *
- * @param[in] vm the pointer that points the VM data structure
- * @param[in] gpa_arg the start GPA address of the guest memory region
- * @param[in] size_arg the size of the guest memory region
- *
- * @return true - The HPA of the guest memory region is continuous
- * @return false - The HPA of the guest memory region is non-continuous
- */
-bool check_continuous_hpa(struct acrn_vm *vm, uint64_t gpa_arg, uint64_t size_arg);
-/**
  *@pre (pml4_page != NULL) && (pg_size != NULL)
  */
-uint64_t *lookup_address(uint64_t *pml4_page, uint64_t addr,
+const uint64_t *lookup_address(uint64_t *pml4_page, uint64_t addr,
 		uint64_t *pg_size, const struct memory_ops *mem_ops);
-
-#pragma pack(1)
 
 /** Defines a single entry in an E820 memory map. */
 struct e820_entry {
@@ -177,9 +180,7 @@ struct e820_entry {
 	uint64_t length;
    /** The type of memory region. */
 	uint32_t type;
-};
-
-#pragma pack()
+} __packed;
 
 /* E820 memory types */
 #define E820_TYPE_RAM		1U	/* EFI 1, 2, 3, 4, 5, 6, 7 */
@@ -221,8 +222,8 @@ void destroy_ept(struct acrn_vm *vm);
  * @param[in] vm the pointer that points to VM data structure
  * @param[in] gpa the specified guest-physical address
  *
- * @return INVALID_HPA - the HPA of parameter gpa is unmapping
- * @return hpa - the HPA of parameter gpa is hpa
+ * @retval hpa the host physical address mapping to the \p gpa
+ * @retval INVALID_HPA the HPA of parameter gpa is unmapping
  */
 uint64_t gpa2hpa(struct acrn_vm *vm, uint64_t gpa);
 /**
@@ -233,8 +234,8 @@ uint64_t gpa2hpa(struct acrn_vm *vm, uint64_t gpa);
  * @param[out] size the pointer that returns the page size of
  *                  the page in which the gpa is
  *
- * @return INVALID_HPA - the HPA of parameter gpa is unmapping
- * @return hpa - the HPA of parameter gpa is hpa
+ * @retval hpa the host physical address mapping to the \p gpa
+ * @retval INVALID_HPA the HPA of parameter gpa is unmapping
  */
 uint64_t local_gpa2hpa(struct acrn_vm *vm, uint64_t gpa, uint32_t *size);
 /**
@@ -299,19 +300,19 @@ void ept_mr_del(struct acrn_vm *vm, uint64_t *pml4_page, uint64_t gpa,
  *
  * @param[in] vcpu the pointer that points to vcpu data structure
  *
- * @return -EINVAL - fail to handle the EPT violation
- * @return 0 - Success to handle the EPT violation
+ * @retval -EINVAL fail to handle the EPT violation
+ * @retval 0 Success to handle the EPT violation
  */
-int ept_violation_vmexit_handler(struct acrn_vcpu *vcpu);
+int32_t ept_violation_vmexit_handler(struct acrn_vcpu *vcpu);
 /**
  * @brief EPT misconfiguration handling
  *
  * @param[in] vcpu the pointer that points to vcpu data structure
  *
- * @return -EINVAL - fail to handle the EPT misconfig
- * @return 0 - Success to handle the EPT misconfig
+ * @retval -EINVAL fail to handle the EPT misconfig
+ * @retval 0 Success to handle the EPT misconfig
  */
-int ept_misconfig_vmexit_handler(__unused struct acrn_vcpu *vcpu);
+int32_t ept_misconfig_vmexit_handler(__unused struct acrn_vcpu *vcpu);
 
 /**
  * @}

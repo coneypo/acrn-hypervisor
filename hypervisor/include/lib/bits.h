@@ -39,7 +39,7 @@
  **/
 #define INVALID_BIT_INDEX  0xffffU
 
-/**
+/*
  *
  * fls32 - Find the Last (most significant) bit Set in value and
  *       return the bit index of that bit.
@@ -61,32 +61,30 @@
  * when 'value' was zero, bit operations function can't find bit
  * set and return the invalid bit index directly.
  *
- * **/
+ */
 static inline uint16_t fls32(uint32_t value)
 {
-	uint32_t ret = 0U;
-	if (value == 0U) {
-		return (INVALID_BIT_INDEX);
-	}
-	asm volatile("bsrl %1,%0"
-			: "=r" (ret)
-			: "rm" (value));
+	uint32_t ret;
+	asm volatile("bsrl %1,%0\n\t"
+			"jnz 1f\n\t"
+			"mov %2,%0\n"
+			"1:" : "=r" (ret)
+			: "rm" (value), "i" (INVALID_BIT_INDEX));
 	return (uint16_t)ret;
 }
 
 static inline uint16_t fls64(uint64_t value)
 {
 	uint64_t ret = 0UL;
-	if (value == 0UL) {
-		return (INVALID_BIT_INDEX);
-	}
-	asm volatile("bsrq %1,%0"
-			: "=r" (ret)
-			: "rm" (value));
+	asm volatile("bsrq %1,%0\n\t"
+			"jnz 1f\n\t"
+			"mov %2,%0\n"
+			"1:" : "=r" (ret)
+			: "rm" (value), "i" (INVALID_BIT_INDEX));
 	return (uint16_t)ret;
 }
 
-/**
+/*
  *
  * ffs64 - Find the First (least significant) bit Set in value(Long type)
  * and return the index of that bit.
@@ -104,22 +102,21 @@ static inline uint16_t fls64(uint64_t value)
  *	ffs64 (0x8000000000000001) = 0
  *	ffs64 (0xf000000000000000) = 60
  *
- * @param value: 'unsigned long' type value
+ * @param value: 'uint64_t' type value
  *
  * @return value: zero-based bit index, INVALID_BIT_INDEX means
  * when 'value' was zero, bit operations function can't find bit
  * set and return the invalid bit index directly.
  *
- * **/
+ */
 static inline uint16_t ffs64(uint64_t value)
 {
-	uint64_t ret = 0UL;
-	if (value == 0UL) {
-		return (INVALID_BIT_INDEX);
-	}
-	asm volatile("bsfq %1,%0"
-			: "=r" (ret)
-			: "rm" (value));
+	uint64_t ret;
+	asm volatile("bsfq %1,%0\n\t"
+			"jnz 1f\n\t"
+			"mov %2,%0\n"
+			"1:" : "=r" (ret)
+			: "rm" (value), "i" (INVALID_BIT_INDEX));
 	return (uint16_t)ret;
 }
 
@@ -136,17 +133,19 @@ static inline uint16_t ffz64(uint64_t value)
  */
 static inline uint64_t ffz64_ex(const uint64_t *addr, uint64_t size)
 {
+	uint64_t ret = size;
 	uint64_t idx;
 
 	for (idx = 0UL; (idx << 6U) < size; idx++) {
 		if (addr[idx] != ~0UL) {
-			return (idx << 6U) + ffz64(addr[idx]);
+			ret = (idx << 6U) + ffz64(addr[idx]);
+			break;
 		}
 	}
 
-	return size;
+	return ret;
 }
-/**
+/*
  * Counts leading zeros.
  *
  * The number of leading zeros is defined as the number of
@@ -163,14 +162,10 @@ static inline uint64_t ffz64_ex(const uint64_t *addr, uint64_t size)
  */
 static inline uint16_t clz(uint32_t value)
 {
-	if (value == 0U) {
-		return 32U;
-	} else {
-		return (31U - fls32(value));
-	}
+	return ((value != 0U) ? (31U - fls32(value)) : 32U);
 }
 
-/**
+/*
  * Counts leading zeros (64 bit version).
  *
  * @param value:The 64 bit value to count the number of leading zeros.
@@ -179,11 +174,7 @@ static inline uint16_t clz(uint32_t value)
  */
 static inline uint16_t clz64(uint64_t value)
 {
-	if (value == 0UL) {
-		return 64U;
-	} else {
-		return (63U - fls64(value));
-	}
+	return ((value != 0UL) ? (63U - fls64(value)) : 64U);
 }
 
 /*
@@ -231,26 +222,22 @@ build_bitmap_clear(bitmap32_clear_lock, "l", uint32_t, BUS_LOCK)
  * Note:Input parameter nr shall be less than 64. If nr>=64, it will
  * be truncated.
  */
-static inline bool bitmap_test(uint16_t nr_arg, const volatile uint64_t *addr)
+static inline bool bitmap_test(uint16_t nr, const volatile uint64_t *addr)
 {
-	uint16_t nr;
-	int32_t ret=0;
-	nr = nr_arg & 0x3fU;
+	int32_t ret = 0;
 	asm volatile("btq %q2,%1\n\tsbbl %0, %0"
 			: "=r" (ret)
-			: "m" (*addr), "r" ((uint64_t)nr)
+			: "m" (*addr), "r" ((uint64_t)(nr & 0x3fU))
 			: "cc", "memory");
 	return (ret != 0);
 }
 
-static inline bool bitmap32_test(uint16_t nr_arg, const volatile uint32_t *addr)
+static inline bool bitmap32_test(uint16_t nr, const volatile uint32_t *addr)
 {
-	uint16_t nr;
-	int32_t ret=0;
-	nr = nr_arg & 0x1fU;
+	int32_t ret = 0;
 	asm volatile("btl %2,%1\n\tsbbl %0, %0"
 			: "=r" (ret)
-			: "m" (*addr), "r" ((uint32_t)nr)
+			: "m" (*addr), "r" ((uint32_t)(nr & 0x1fU))
 			: "cc", "memory");
 	return (ret != 0);
 }

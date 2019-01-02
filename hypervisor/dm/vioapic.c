@@ -55,26 +55,23 @@ vioapic_send_intr(struct acrn_vioapic *vioapic, uint32_t pin)
 
 	if ((rte.full & IOAPIC_RTE_INTMASK) == IOAPIC_RTE_INTMSET) {
 		dev_dbg(ACRN_DBG_IOAPIC, "ioapic pin%hhu: masked", pin);
-		return;
-	}
+	} else {
+		phys = ((rte.full & IOAPIC_RTE_DESTMOD) == IOAPIC_RTE_DESTPHY);
+		delmode = (uint32_t)(rte.full & IOAPIC_RTE_DELMOD);
+		level = ((rte.full & IOAPIC_RTE_TRGRLVL) != 0UL);
 
-	phys = ((rte.full & IOAPIC_RTE_DESTMOD) == IOAPIC_RTE_DESTPHY);
-	delmode = (uint32_t)(rte.full & IOAPIC_RTE_DELMOD);
-	level = ((rte.full & IOAPIC_RTE_TRGRLVL) != 0UL);
-	/* For level trigger irq, avoid send intr if
-	 * previous one hasn't received EOI
-	 */
-	if (level) {
-		if ((vioapic->rtbl[pin].full & IOAPIC_RTE_REM_IRR) != 0UL) {
-			return;
+		/* For level trigger irq, avoid send intr if
+		 * previous one hasn't received EOI
+		 */
+		if (!level || ((vioapic->rtbl[pin].full & IOAPIC_RTE_REM_IRR) == 0UL)) {
+			if (level) {
+				vioapic->rtbl[pin].full |= IOAPIC_RTE_REM_IRR;
+			}
+			vector = rte.u.lo_32 & IOAPIC_RTE_LOW_INTVEC;
+			dest = (uint32_t)(rte.full >> IOAPIC_RTE_DEST_SHIFT);
+			vlapic_deliver_intr(vioapic->vm, level, dest, phys, delmode, vector, false);
 		}
-		vioapic->rtbl[pin].full |= IOAPIC_RTE_REM_IRR;
 	}
-
-	vector = rte.u.lo_32 & IOAPIC_RTE_LOW_INTVEC;
-	dest = (uint32_t)(rte.full >> IOAPIC_RTE_DEST_SHIFT);
-	vlapic_deliver_intr(vioapic->vm, level, dest, phys,
-							delmode, vector, false);
 }
 
 /**
@@ -86,26 +83,24 @@ vioapic_set_pinstate(struct acrn_vioapic *vioapic, uint16_t pin, uint32_t level)
 	uint32_t old_lvl;
 	union ioapic_rte rte;
 
-	if (pin >= REDIR_ENTRIES_HW) {
-		return;
-	}
-
-	rte = vioapic->rtbl[pin];
-	old_lvl = (uint32_t)bitmap_test(pin & 0x3FU, &vioapic->pin_state[pin >> 6U]);
-	if (level == 0U) {
-		/* clear pin_state and deliver interrupt according to polarity */
-		bitmap_clear_nolock(pin & 0x3FU,
-				&vioapic->pin_state[pin >> 6U]);
-		if (((rte.full & IOAPIC_RTE_INTPOL) != 0UL)
-			&& old_lvl != level) {
-			vioapic_send_intr(vioapic, pin);
-		}
-	} else {
-		/* set pin_state and deliver intrrupt according to polarity */
-		bitmap_set_nolock(pin & 0x3FU, &vioapic->pin_state[pin >> 6U]);
-		if (((rte.full & IOAPIC_RTE_INTPOL) == 0UL)
-			&& old_lvl != level) {
-			vioapic_send_intr(vioapic, pin);
+	if (pin < REDIR_ENTRIES_HW) {
+		rte = vioapic->rtbl[pin];
+		old_lvl = (uint32_t)bitmap_test(pin & 0x3FU, &vioapic->pin_state[pin >> 6U]);
+		if (level == 0U) {
+			/* clear pin_state and deliver interrupt according to polarity */
+			bitmap_clear_nolock(pin & 0x3FU,
+					&vioapic->pin_state[pin >> 6U]);
+			if (((rte.full & IOAPIC_RTE_INTPOL) != 0UL)
+				&& old_lvl != level) {
+				vioapic_send_intr(vioapic, pin);
+			}
+		} else {
+			/* set pin_state and deliver intrrupt according to polarity */
+			bitmap_set_nolock(pin & 0x3FU, &vioapic->pin_state[pin >> 6U]);
+			if (((rte.full & IOAPIC_RTE_INTPOL) == 0UL)
+				&& old_lvl != level) {
+				vioapic_send_intr(vioapic, pin);
+			}
 		}
 	}
 }
@@ -122,7 +117,7 @@ vioapic_set_pinstate(struct acrn_vioapic *vioapic, uint16_t pin, uint32_t level)
  *			GSI_RAISING_PULSE/GSI_FALLING_PULSE
  *
  * @pre irq < vioapic_pincount(vm)
- * @return void
+ * @return None
  */
 void
 vioapic_set_irq_nolock(struct acrn_vm *vm, uint32_t irq, uint32_t operation)
@@ -165,7 +160,7 @@ vioapic_set_irq_nolock(struct acrn_vm *vm, uint32_t irq, uint32_t operation)
  *
  * @pre irq < vioapic_pincount(vm)
  *
- * @return void
+ * @return None
  */
 void
 vioapic_set_irq(struct acrn_vm *vm, uint32_t irq, uint32_t operation)
@@ -218,18 +213,20 @@ vioapic_update_tmr(struct acrn_vcpu *vcpu)
 static uint32_t
 vioapic_indirect_read(const struct acrn_vioapic *vioapic, uint32_t addr)
 {
-	uint32_t regnum;
+	uint32_t regnum, ret = 0U;
 	uint32_t pin, pincount = vioapic_pincount(vioapic->vm);
 
 	regnum = addr & 0xffU;
 	switch (regnum) {
 	case IOAPIC_ID:
-		return vioapic->id;
+		ret = vioapic->id;
+		break;
 	case IOAPIC_VER:
-		return (((uint32_t)pincount - 1U) << MAX_RTE_SHIFT) |
-						ACRN_IOAPIC_VERSION;
+		ret = (((uint32_t)pincount - 1U) << MAX_RTE_SHIFT) | ACRN_IOAPIC_VERSION;
+		break;
 	case IOAPIC_ARB:
-		return vioapic->id;
+		ret = vioapic->id;
+		break;
 	default:
 		/*
 		 * In this switch statement, regnum shall either be IOAPIC_ID or
@@ -247,29 +244,31 @@ vioapic_indirect_read(const struct acrn_vioapic *vioapic, uint32_t addr)
 		uint32_t rte_offset = addr_offset >> 1U;
 		pin = rte_offset;
 		if ((addr_offset & 0x1U) != 0U) {
-			return vioapic->rtbl[pin].u.hi_32;
+			ret = vioapic->rtbl[pin].u.hi_32;
 		} else {
-			return vioapic->rtbl[pin].u.lo_32;
+			ret = vioapic->rtbl[pin].u.lo_32;
 		}
 	}
 
-	return 0;
+	return ret;
 }
 
 static inline bool vioapic_need_intr(const struct acrn_vioapic *vioapic, uint16_t pin)
 {
 	uint32_t lvl;
 	union ioapic_rte rte;
+	bool ret;
 
 	if (pin >= REDIR_ENTRIES_HW) {
-		return false;
+		ret = false;
+	} else {
+		rte = vioapic->rtbl[pin];
+		lvl = (uint32_t)bitmap_test(pin & 0x3FU, &vioapic->pin_state[pin >> 6U]);
+		ret = !!((((rte.full & IOAPIC_RTE_INTPOL) != 0UL) && lvl == 0U) ||
+			(((rte.full & IOAPIC_RTE_INTPOL) == 0UL) && lvl != 0U));
 	}
 
-	rte = vioapic->rtbl[pin];
-	lvl = (uint32_t)bitmap_test(pin & 0x3FU, &vioapic->pin_state[pin >> 6U]);
-
-	return !!((((rte.full & IOAPIC_RTE_INTPOL) != 0UL) && lvl == 0U) ||
-		(((rte.full & IOAPIC_RTE_INTPOL) == 0UL) && lvl != 0U));
+	return ret;
 }
 
 /*
@@ -400,7 +399,7 @@ vioapic_indirect_write(struct acrn_vioapic *vioapic, uint32_t addr,
 				((last.full & IOAPIC_RTE_INTMASK) == 0UL)) {
 			/* VM enable intr */
 			/* NOTE: only support max 256 pin */
-			(void)ptdev_intx_pin_remap(vioapic->vm,
+			(void)ptirq_intx_pin_remap(vioapic->vm,
 					(uint8_t)pin, PTDEV_VPIN_IOAPIC);
 		}
 	}
@@ -468,7 +467,7 @@ vioapic_process_eoi(struct acrn_vm *vm, uint32_t vector)
 			continue;
 		}
 
-		ptdev_intx_ack(vm, (uint8_t)pin, PTDEV_VPIN_IOAPIC);
+		ptirq_intx_ack(vm, (uint8_t)pin, PTDEV_VPIN_IOAPIC);
 	}
 
 	/*
@@ -525,20 +524,24 @@ vioapic_init(struct acrn_vm *vm)
 uint32_t
 vioapic_pincount(const struct acrn_vm *vm)
 {
+	uint32_t ret;
+
 	if (is_vm0(vm)) {
-		return REDIR_ENTRIES_HW;
+	        ret = REDIR_ENTRIES_HW;
 	} else {
-		return VIOAPIC_RTE_NUM;
+		ret = VIOAPIC_RTE_NUM;
 	}
+
+	return ret;
 }
 
-int vioapic_mmio_access_handler(struct io_request *io_req, void *handler_private_data)
+int32_t vioapic_mmio_access_handler(struct io_request *io_req, void *handler_private_data)
 {
 	struct acrn_vm *vm = (struct acrn_vm *)handler_private_data;
 	struct acrn_vioapic *vioapic;
 	struct mmio_request *mmio = &io_req->reqs.mmio;
 	uint64_t gpa = mmio->address;
-	int ret = 0;
+	int32_t ret = 0;
 
 	vioapic = vm_ioapic(vm);
 

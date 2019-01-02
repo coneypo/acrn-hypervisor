@@ -58,77 +58,13 @@ struct shared_buf {
 	uint32_t padding[6];
 };
 
-#ifdef HV_DEBUG
 
-static inline void sbuf_clear_flags(struct shared_buf *sbuf, uint32_t flags)
-{
-	sbuf->flags &= ~flags;
-}
-
-static inline void sbuf_set_flags(struct shared_buf *sbuf, uint32_t flags)
-{
-	sbuf->flags = flags;
-}
-
-static inline void sbuf_add_flags(struct shared_buf *sbuf, uint32_t flags)
-{
-	sbuf->flags |= flags;
-}
-
-/**
- *@pre sbuf != NULL
- *@pre data != NULL
- */
-uint32_t sbuf_get(struct shared_buf *sbuf, uint8_t *data);
 /**
  *@pre sbuf != NULL
  *@pre data != NULL
  */
 uint32_t sbuf_put(struct shared_buf *sbuf, uint8_t *data);
-int sbuf_share_setup(uint16_t pcpu_id, uint32_t sbuf_id, uint64_t *hva);
+int32_t sbuf_share_setup(uint16_t pcpu_id, uint32_t sbuf_id, uint64_t *hva);
 uint32_t sbuf_next_ptr(uint32_t pos, uint32_t span, uint32_t scope);
-
-#else /* HV_DEBUG */
-
-static inline void sbuf_clear_flags(
-		__unused struct shared_buf *sbuf,
-		__unused uint32_t flags)
-{
-}
-
-static inline void sbuf_set_flags(
-		__unused struct shared_buf *sbuf,
-		__unused uint32_t flags)
-{
-}
-
-static inline void sbuf_add_flags(
-		__unused struct shared_buf *sbuf,
-		__unused uint32_t flags)
-{
-}
-
-static inline int sbuf_get(
-		__unused struct shared_buf *sbuf,
-		__unused uint8_t *data)
-{
-	return 0;
-}
-
-static inline int sbuf_put(
-		__unused struct shared_buf *sbuf,
-		__unused uint8_t *data)
-{
-	return 0;
-}
-
-static inline int sbuf_share_setup(
-		__unused uint16_t pcpu_id,
-		__unused uint32_t sbuf_id,
-		__unused uint64_t *hva)
-{
-	return -1;
-}
-#endif /* HV_DEBUG */
 
 #endif /* SHARED_BUFFER_H */

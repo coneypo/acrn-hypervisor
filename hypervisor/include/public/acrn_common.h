@@ -196,46 +196,46 @@ union vhm_io_request {
  * +-----------------------+-------------------------+----------------------+
  * | SOS vCPU 0            | SOS vCPU x              | UOS vCPU y           |
  * +=======================+=========================+======================+
- * |                       |                         | **Hypervisor**:      |
+ * |                       |                         | Hypervisor:          |
  * |                       |                         |                      |
  * |                       |                         | - Fill in type,      |
  * |                       |                         |   addr, etc.         |
  * |                       |                         | - Pause UOS vCPU y   |
  * |                       |                         | - Set state to       |
- * |                       |                         |   PENDING **(a)**    |
+ * |                       |                         |   PENDING (a)        |
  * |                       |                         | - Fire upcall to     |
  * |                       |                         |   SOS vCPU 0         |
  * |                       |                         |                      |
  * +-----------------------+-------------------------+----------------------+
- * | **VHM**:              |                         |                      |
+ * | VHM:                  |                         |                      |
  * |                       |                         |                      |
  * | - Scan for pending    |                         |                      |
  * |   requests            |                         |                      |
  * | - Set state to        |                         |                      |
- * |   PROCESSING **(b)**  |                         |                      |
+ * |   PROCESSING (b)      |                         |                      |
  * | - Assign requests to  |                         |                      |
- * |   clients **(c)**     |                         |                      |
+ * |   clients (c)         |                         |                      |
  * |                       |                         |                      |
  * +-----------------------+-------------------------+----------------------+
- * |                       | **Client**:             |                      |
+ * |                       | Client:                 |                      |
  * |                       |                         |                      |
  * |                       | - Scan for assigned     |                      |
  * |                       |   requests              |                      |
  * |                       | - Handle the            |                      |
- * |                       |   requests **(d)**      |                      |
+ * |                       |   requests (d)          |                      |
  * |                       | - Set state to COMPLETE |                      |
  * |                       | - Notify the hypervisor |                      |
  * |                       |                         |                      |
  * +-----------------------+-------------------------+----------------------+
- * |                       | **Hypervisor**:         |                      |
+ * |                       | Hypervisor:             |                      |
  * |                       |                         |                      |
  * |                       | - resume UOS vCPU y     |                      |
- * |                       |   **(e)**               |                      |
+ * |                       |   (e)                   |                      |
  * |                       |                         |                      |
  * +-----------------------+-------------------------+----------------------+
- * |                       |                         | **Hypervisor**:      |
+ * |                       |                         | Hypervisor:          |
  * |                       |                         |                      |
- * |                       |                         | - Post-work **(f)**  |
+ * |                       |                         | - Post-work (f)      |
  * |                       |                         | - set state to FREE  |
  * |                       |                         |                      |
  * +-----------------------+-------------------------+----------------------+
@@ -261,7 +261,7 @@ union vhm_io_request {
  */
 struct vhm_request {
 	/**
-	 * Type of this request.
+	 * @brief Type of this request.
 	 *
 	 * Byte offset: 0.
 	 */
@@ -275,14 +275,16 @@ struct vhm_request {
 	uint32_t completion_polling;
 
 	/**
-	 * Reserved.
+	 * @brief Reserved.
 	 *
 	 * Byte offset: 8.
 	 */
 	uint32_t reserved0[14];
 
 	/**
-	 * Details about this request. For REQ_PORTIO, this has type
+	 * @brief Details about this request.
+	 *
+	 * For REQ_PORTIO, this has type
 	 * pio_request. For REQ_MMIO and REQ_WP, this has type mmio_request. For
 	 * REQ_PCICFG, this has type pci_request.
 	 *
@@ -291,25 +293,25 @@ struct vhm_request {
 	union vhm_io_request reqs;
 
 	/**
-	 * Whether this request is valid for processing. ACRN write, VHM read
-	 * only.
-	 *
-	 * Warning; this field is obsolete and will be removed soon.
+	 * @brief Reserved.
 	 *
 	 * Byte offset: 128.
 	 */
-	int32_t valid;
+	uint32_t reserved1;
 
 	/**
-	 * The client which is distributed to handle this request. Accessed by
-	 * VHM only.
+	 * @brief The client which is distributed to handle this request.
+	 *
+	 * Accessed by VHM only.
 	 *
 	 * Byte offset: 132.
 	 */
 	int32_t client;
 
 	/**
-	 * The status of this request, taking REQ_STATE_xxx as values.
+	 * @brief The status of this request.
+	 *
+	 * Taking REQ_STATE_xxx as values.
 	 *
 	 * Byte offset: 136.
 	 */
@@ -392,7 +394,7 @@ struct acrn_descriptor_ptr {
 	uint16_t limit;
 	uint64_t base;
 	uint16_t reserved[3];   /* align struct size to 64bit */
-} __attribute__((packed));
+} __packed;
 
 /**
  * @brief registers info for vcpu.
@@ -442,7 +444,7 @@ struct acrn_set_vcpu_regs {
 
 	/** the structure to hold vcpu state */
 	struct acrn_vcpu_regs vcpu_regs;
-} __attribute__((aligned(8)));
+} __aligned(8);
 
 /**
  * @brief Info to set ioreq buffer for a created VM
@@ -466,7 +468,7 @@ struct acrn_set_ioreq_buffer {
  * the parameter for HC_SET_IRQLINE hypercall
  */
 struct acrn_irqline_ops {
-	uint32_t nr_gsi;
+	uint32_t gsi;
 	uint32_t op;
 } __aligned(8);
 
@@ -560,14 +562,14 @@ struct acpi_generic_address {
 	uint8_t 	bit_offset;
 	uint8_t 	access_size;
 	uint64_t	address;
-} __attribute__((aligned(8)));
+} __aligned(8);
 
 struct cpu_cx_data {
 	struct acpi_generic_address cx_reg;
 	uint8_t 	type;
 	uint32_t	latency;
 	uint64_t	power;
-} __attribute__((aligned(8)));
+} __aligned(8);
 
 struct cpu_px_data {
 	uint64_t core_frequency;	/* megahertz */
@@ -576,13 +578,13 @@ struct cpu_px_data {
 	uint64_t bus_master_latency;	/* microseconds */
 	uint64_t control;		/* control value */
 	uint64_t status;		/* success indicator */
-} __attribute__((aligned(8)));
+} __aligned(8);
 
 struct acpi_sx_pkg {
 	uint8_t		val_pm1a;
 	uint8_t		val_pm1b;
 	uint16_t	reserved;
-} __attribute__((aligned(8)));
+} __aligned(8);
 
 struct pm_s_state_data {
 	struct acpi_generic_address pm1a_evt;
@@ -593,7 +595,7 @@ struct pm_s_state_data {
 	struct acpi_sx_pkg s5_pkg;
 	uint32_t *wake_vector_32;
 	uint64_t *wake_vector_64;
-}__attribute__((aligned(8)));
+} __aligned(8);
 
 /**
  * @brief Info PM command from DM/VHM.
@@ -624,7 +626,7 @@ enum pm_cmd_type {
  *
  * the parameter for HC_VM_INTR_MONITOR hypercall
  */
-#define MAX_PTDEV_NUM 24
+#define MAX_PTDEV_NUM 24U
 struct acrn_intr_monitor {
 	/** sub command for intr monitor */
 	uint32_t cmd;

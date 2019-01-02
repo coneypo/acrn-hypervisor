@@ -4,12 +4,12 @@
  * SPDX-License-Identifier: BSD-3-Clause
  */
 #include <hypervisor.h>
-#include <vm0_boot.h>
+#include <boot_context.h>
 
 #define CAT__(A,B) A ## B
 #define CAT_(A,B) CAT__(A,B)
 #define CTASSERT(expr) \
-typedef int CAT_(CTA_DummyType,__LINE__)[(expr) ? 1 : -1]
+typedef int32_t CAT_(CTA_DummyType,__LINE__)[(expr) ? 1 : -1]
 
 /* Build time sanity checks to make sure hard-coded offset
 *  is matching the actual offset!

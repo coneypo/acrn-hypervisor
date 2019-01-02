@@ -119,6 +119,7 @@ struct uart_vdev {
 };
 
 static void uart_drain(int fd, enum ev_type ev, void *arg);
+static void uart_deinit(struct uart_vdev *uart);
 
 static void
 ttyclose(void)
@@ -134,6 +135,7 @@ ttyopen(struct ttyfd *tf)
 	tf->tio_new = tf->tio_orig;
 	cfmakeraw(&tf->tio_new);
 	tf->tio_new.c_cflag |= CLOCAL;
+	tcflush(tf->fd_in, TCIOFLUSH);
 	tcsetattr(tf->fd_in, TCSANOW, &tf->tio_new);
 
 	if (tf->fd_in == STDIN_FILENO) {
@@ -266,12 +268,33 @@ rxfifo_numchars(struct uart_vdev *uart)
 }
 
 static void
+uart_mevent_teardown(void *param)
+{
+	struct uart_vdev *uart = param;
+
+	uart->mev = 0;
+	ttyclose();
+
+	if (uart->tty.fd_in == STDIN_FILENO) {
+		stdio_in_use = false;
+	} else {
+		close(uart->tty.fd_in);
+	}
+
+	uart->tty.fd_in = -1;
+	uart->tty.fd_out = -1;
+	uart->tty.opened = false;
+
+	uart_deinit(uart);
+}
+
+static void
 uart_opentty(struct uart_vdev *uart)
 {
 	ttyopen(&uart->tty);
 	if (isatty(uart->tty.fd_in)) {
 		uart->mev = mevent_add(uart->tty.fd_in, EVF_READ,
-			uart_drain, uart);
+			uart_drain, uart, uart_mevent_teardown, uart);
 		assert(uart->mev != NULL);
 	}
 }
@@ -284,11 +307,10 @@ uart_closetty(struct uart_vdev *uart)
 			mevent_delete_close(uart->mev);
 		else
 			mevent_delete(uart->mev);
-
-		uart->mev = 0;
+		/* uart deinit will be invoked in mevent teardown callback */
+	} else {
+		uart_mevent_teardown(uart);
 	}
-
-	ttyclose();
 }
 
 static uint8_t
@@ -397,9 +419,10 @@ uart_drain(int fd, enum ev_type ev, void *arg)
 	if ((uart->mcr & MCR_LOOPBACK) != 0) {
 		(void) ttyread(&uart->tty);
 	} else {
-		while ((ch = ttyread(&uart->tty)) != -1)
+		/* only read tty when rxfifo available to make sure no data lost */
+		while (rxfifo_available(uart) && (ch = ttyread(&uart->tty)) != -1) {
 			rxfifo_putchar(uart, ch);
-
+		}
 		uart_toggle_intr(uart);
 	}
 
@@ -628,7 +651,7 @@ uart_legacy_dealloc(int which)
 	uart_lres[which].inuse = false;
 }
 
-struct uart_vdev *
+static struct uart_vdev *
 uart_init(uart_intr_func_t intr_assert, uart_intr_func_t intr_deassert,
 	void *arg)
 {
@@ -649,7 +672,7 @@ uart_init(uart_intr_func_t intr_assert, uart_intr_func_t intr_deassert,
 	return uart;
 }
 
-void
+static void
 uart_deinit(struct uart_vdev *uart)
 {
 	if (uart) {
@@ -680,15 +703,19 @@ uart_tty_backend(struct uart_vdev *uart, const char *opts)
 	return retval;
 }
 
-int
-uart_set_backend(struct uart_vdev *uart, const char *opts)
+struct uart_vdev *
+uart_set_backend(uart_intr_func_t intr_assert, uart_intr_func_t intr_deassert,
+	void *arg, const char *opts)
 {
-	int retval;
+	int retval = -1;
+	struct uart_vdev *uart;
 
-	retval = -1;
+	uart = uart_init(intr_assert, intr_deassert, arg);
+	if (!uart)
+		return NULL;
 
 	if (opts == NULL)
-		return -EINVAL;
+		return uart;
 
 	if (strcmp("stdio", opts) == 0) {
 		if (!stdio_in_use) {
@@ -702,17 +729,28 @@ uart_set_backend(struct uart_vdev *uart, const char *opts)
 		retval = 0;
 	}
 
-	if (retval)
-		return -EINVAL;
+	if (retval) {
+		uart_deinit(uart);
+		return NULL;
+	}
 
 	/* Make the backend file descriptor non-blocking */
-	if (retval == 0)
-		retval = fcntl(uart->tty.fd_in, F_SETFL, O_NONBLOCK);
+	retval = fcntl(uart->tty.fd_in, F_SETFL, O_NONBLOCK);
+	if (retval != 0)
+		goto fail_tty_backend;
 
-	if (retval == 0)
-		uart_opentty(uart);
+	uart_opentty(uart);
+	return uart;
 
-	return retval;
+fail_tty_backend:
+	if (uart->tty.fd_in) {
+		close(uart->tty.fd_in);
+		uart->tty.fd_in = -1;
+		uart->tty.fd_out = -1;
+		uart->tty.opened = false;
+	}
+	uart_deinit(uart);
+	return NULL;
 }
 
 void
@@ -732,12 +770,4 @@ uart_release_backend(struct uart_vdev *uart, const char *opts)
 		return;
 
 	uart_closetty(uart);
-	if (strcmp("stdio", opts) == 0) {
-		stdio_in_use = false;
-	} else
-		close(uart->tty.fd_in);
-
-	uart->tty.fd_in = -1;
-	uart->tty.fd_out = -1;
-	uart->tty.opened = false;
 }

@@ -9,6 +9,7 @@
 #include <bsp_extern.h>
 #include <vpci.h>
 #include <page.h>
+#include <cpu_caps.h>
 
 #ifdef CONFIG_PARTITION_MODE
 #include <mptable.h>
@@ -26,7 +27,7 @@ struct vm_hw_info {
 	struct acrn_vcpu vcpu_array[CONFIG_MAX_VCPUS_PER_VM];
 	uint16_t created_vcpus;	/* Number of created vcpus */
 	uint64_t gpa_lowtop;    /* top lowmem gpa of this VM */
-} __aligned(CPU_PAGE_SIZE);
+} __aligned(PAGE_SIZE);
 
 struct sw_linux {
 	void *ramdisk_src_addr;		/* HVA */
@@ -48,7 +49,7 @@ struct sw_kernel_info {
 };
 
 struct vm_sw_info {
-	int kernel_type;	/* Guest kernel type */
+	int32_t kernel_type;	/* Guest kernel type */
 	/* Kernel information (common for all guest types) */
 	struct sw_kernel_info kernel_info;
 	/* Additional information specific to Linux guests */
@@ -88,9 +89,9 @@ enum vm_state {
 
 struct vm_arch {
 	/* I/O bitmaps A and B for this VM, MUST be 4-Kbyte aligned */
-	uint8_t io_bitmap[CPU_PAGE_SIZE*2];
+	uint8_t io_bitmap[PAGE_SIZE*2];
 	/* MSR bitmap region for this VM, MUST be 4-Kbyte aligned */
-	uint8_t msr_bitmap[CPU_PAGE_SIZE];
+	uint8_t msr_bitmap[PAGE_SIZE];
 
 	uint64_t guest_init_pml4;/* Guest init pml4 */
 	/* EPT hierarchy for Normal World */
@@ -108,7 +109,7 @@ struct vm_arch {
 	struct vm_io_handler_desc emul_pio[EMUL_PIO_IDX_MAX];
 
 	/* reference to virtual platform to come here (as needed) */
-} __aligned(CPU_PAGE_SIZE);
+} __aligned(PAGE_SIZE);
 
 
 #define CPUID_CHECK_SUBLEAF	(1U << 0U)
@@ -139,7 +140,7 @@ struct acrn_vm {
 	uint16_t emul_mmio_regions; /* Number of emulated mmio regions */
 	struct mem_io_node emul_mmio[CONFIG_MAX_EMULATED_MMIO_REGIONS];
 
-	unsigned char GUID[16];
+	uint8_t GUID[16];
 	struct secure_world_control sworld_control;
 
 	/* Secure World's snapshot
@@ -151,7 +152,7 @@ struct acrn_vm {
 
 	uint32_t vcpuid_entry_nr, vcpuid_level, vcpuid_xlevel;
 	struct vcpuid_entry vcpuid_entries[MAX_VM_VCPUID_ENTRIES];
-	struct vpci vpci;
+	struct acrn_vpci vpci;
 #ifdef CONFIG_PARTITION_MODE
 	struct vm_description	*vm_desc;
 	uint8_t vrtc_offset;
@@ -160,11 +161,12 @@ struct acrn_vm {
 	spinlock_t softirq_dev_lock;
 	struct list_head softirq_dev_entry_list;
 	uint64_t intr_inject_delay_delta; /* delay of intr injection */
-} __aligned(CPU_PAGE_SIZE);
+	bool snoopy_mem;
+} __aligned(PAGE_SIZE);
 
 #ifdef CONFIG_PARTITION_MODE
 struct vpci_vdev_array {
-	int num_pci_vdev;
+	int32_t num_pci_vdev;
 	struct pci_vdev vpci_vdev_list[];
 };
 #endif
@@ -174,7 +176,7 @@ struct vm_description {
 	 * will be the VM's BSP
 	 */
 	uint16_t               *vm_pcpu_ids;
-	unsigned char          GUID[16]; /* GUID of the vm will be created */
+	uint8_t          GUID[16]; /* GUID of the vm will be created */
 	uint16_t               vm_hw_num_cores;   /* Number of virtual cores */
 	/* Whether secure world is supported for current VM. */
 	bool                   sworld_supported;
@@ -214,29 +216,31 @@ static inline struct acrn_vcpu *vcpu_from_vid(struct acrn_vm *vm, uint16_t vcpu_
 static inline struct acrn_vcpu *vcpu_from_pid(struct acrn_vm *vm, uint16_t pcpu_id)
 {
 	uint16_t i;
-	struct acrn_vcpu *vcpu;
+	struct acrn_vcpu *vcpu, *target_vcpu = NULL;
 
 	foreach_vcpu(i, vm, vcpu) {
 		if (vcpu->pcpu_id == pcpu_id) {
-			return vcpu;
+			target_vcpu = vcpu;
+			break;
 		}
 	}
 
-	return NULL;
+	return target_vcpu;
 }
 
 static inline struct acrn_vcpu *get_primary_vcpu(struct acrn_vm *vm)
 {
 	uint16_t i;
-	struct acrn_vcpu *vcpu;
+	struct acrn_vcpu *vcpu, *target_vcpu = NULL;
 
 	foreach_vcpu(i, vm, vcpu) {
 		if (is_vcpu_bsp(vcpu)) {
-			return vcpu;
+			target_vcpu = vcpu;
+			break;
 		}
 	}
 
-	return NULL;
+	return target_vcpu;
 }
 
 static inline struct acrn_vuart*
@@ -257,14 +261,14 @@ vm_ioapic(struct acrn_vm *vm)
 	return (struct acrn_vioapic *)&(vm->arch_vm.vioapic);
 }
 
-int shutdown_vm(struct acrn_vm *vm);
+int32_t shutdown_vm(struct acrn_vm *vm);
 void pause_vm(struct acrn_vm *vm);
 void resume_vm(struct acrn_vm *vm);
 void resume_vm_from_s3(struct acrn_vm *vm, uint32_t wakeup_vec);
-int start_vm(struct acrn_vm *vm);
-int reset_vm(struct acrn_vm *vm);
-int create_vm(struct vm_description *vm_desc, struct acrn_vm **rtn_vm);
-int prepare_vm(uint16_t pcpu_id);
+void start_vm(struct acrn_vm *vm);
+int32_t reset_vm(struct acrn_vm *vm);
+int32_t create_vm(struct vm_description *vm_desc, struct acrn_vm **rtn_vm);
+int32_t prepare_vm(uint16_t pcpu_id);
 
 #ifdef CONFIG_PARTITION_MODE
 const struct vm_description_array *get_vm_desc_base(void);
@@ -274,7 +278,7 @@ struct acrn_vm *get_vm_from_vmid(uint16_t vm_id);
 
 #ifdef CONFIG_PARTITION_MODE
 struct vm_description_array {
-	int                     num_vm_desc;
+	int32_t                     num_vm_desc;
 	struct vm_description   vm_desc_array[];
 };
 

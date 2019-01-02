@@ -17,7 +17,7 @@
 #define MAX_BOOT_PARAMS_LEN 64U
 
 #ifdef CONFIG_PARTITION_MODE
-int init_vm_boot_info(struct acrn_vm *vm)
+int32_t init_vm_boot_info(struct acrn_vm *vm)
 {
 	struct multiboot_module *mods = NULL;
 	struct multiboot_info *mbi = NULL;
@@ -29,8 +29,10 @@ int init_vm_boot_info(struct acrn_vm *vm)
 
 	mbi = hpa2hva((uint64_t)boot_regs[1]);
 
+	stac();
 	dev_dbg(ACRN_DBG_BOOT, "Multiboot detected, flag=0x%x", mbi->mi_flags);
 	if ((mbi->mi_flags & MULTIBOOT_INFO_HAS_MODS) == 0U) {
+		clac();
 		ASSERT(false, "no kernel info found");
 		return -EINVAL;
 	}
@@ -59,6 +61,7 @@ int init_vm_boot_info(struct acrn_vm *vm)
 			strnlen_s(vm->vm_desc->bootargs, MEM_2K);
 
 	vm->sw.linux_info.bootargs_load_addr = (void *)(vm->vm_desc->mem_size -  8*1024UL);
+	clac();
 
 	return 0;
 }
@@ -79,7 +82,7 @@ static void parse_other_modules(struct acrn_vm *vm,
 
 	for (i = 0U; i < mods_count; i++) {
 		uint32_t type_len;
-		const char *start = hpa2hva((uint64_t)mods[i].mm_string);
+		const char *start = (char *)hpa2hva((uint64_t)mods[i].mm_string);
 		const char *end;
 		void *mod_addr = hpa2hva((uint64_t)mods[i].mm_mod_start);
 		uint32_t mod_size = mods[i].mm_mod_end - mods[i].mm_mod_start;
@@ -104,7 +107,7 @@ static void parse_other_modules(struct acrn_vm *vm,
 			void *load_addr = gpa2hva(vm,
 				(uint64_t)vm->sw.linux_info.bootargs_load_addr);
 			uint32_t args_size = vm->sw.linux_info.bootargs_size;
-			static int copy_once = 1;
+			static int32_t copy_once = 1;
 
 			start = end + 1; /*it is fw name for boot args */
 			snprintf(dyn_bootargs, 100U, " %s=0x%x@0x%x ",
@@ -114,13 +117,12 @@ static void parse_other_modules(struct acrn_vm *vm,
 			/*copy boot args to load addr, set src=load addr*/
 			if (copy_once != 0) {
 				copy_once = 0;
-				(void)strcpy_s(load_addr, MEM_2K, (const
-				char *)vm->sw.linux_info.bootargs_src_addr);
+				(void)strncpy_s(load_addr, MEM_2K, (const char *)vm->sw.linux_info.bootargs_src_addr,
+						vm->sw.linux_info.bootargs_size);
 				vm->sw.linux_info.bootargs_src_addr = load_addr;
 			}
 
-			(void)strcpy_s(load_addr + args_size,
-				100U, dyn_bootargs);
+			(void)strncpy_s(load_addr + args_size, 100U, dyn_bootargs, 100U);
 			vm->sw.linux_info.bootargs_size =
 				strnlen_s(load_addr, MEM_2K);
 
@@ -149,22 +151,22 @@ static void *get_kernel_load_addr(void *kernel_src_addr)
 	 */
 	zeropage = (struct zero_page *)kernel_src_addr;
 	if (zeropage->hdr.relocatable_kernel != 0U) {
-		return (void *)zeropage->hdr.pref_addr;
+		zeropage = (void *)zeropage->hdr.pref_addr;
 	}
 
-	return kernel_src_addr;
+	return zeropage;
 }
 
 /**
  * @param[inout] vm pointer to a vm descriptor
  *
- * @return 0		- on success
- * @return -EINVAL	- on invalid parameters
+ * @retval 0 on success
+ * @retval -EINVAL on invalid parameters
  *
  * @pre vm != NULL
  * @pre is_vm0(vm) == true
  */
-int init_vm_boot_info(struct acrn_vm *vm)
+int32_t init_vm_boot_info(struct acrn_vm *vm)
 {
 	struct multiboot_module *mods = NULL;
 	struct multiboot_info *mbi = NULL;
@@ -174,11 +176,13 @@ int init_vm_boot_info(struct acrn_vm *vm)
 		return -EINVAL;
 	}
 
-	mbi = hpa2hva((uint64_t)boot_regs[1]);
+	mbi = (struct multiboot_info *)hpa2hva((uint64_t)boot_regs[1]);
 
+	stac();
 	dev_dbg(ACRN_DBG_BOOT, "Multiboot detected, flag=0x%x", mbi->mi_flags);
 	if ((mbi->mi_flags & MULTIBOOT_INFO_HAS_MODS) == 0U) {
 		ASSERT(false, "no sos kernel info found");
+		clac();
 		return -EINVAL;
 	}
 
@@ -211,7 +215,7 @@ int init_vm_boot_info(struct acrn_vm *vm)
 		char buf[MAX_BOOT_PARAMS_LEN];
 
 		cmd_dst = kernel_cmdline;
-		cmd_src = hpa2hva((uint64_t)mbi->mi_cmdline);
+		cmd_src = (char *)hpa2hva((uint64_t)mbi->mi_cmdline);
 
 		(void)memset(buf, 0U, sizeof(buf));
 		/*
@@ -241,7 +245,7 @@ int init_vm_boot_info(struct acrn_vm *vm)
 		off += 1U;
 
 		cmd_dst += off;
-		cmd_src = hpa2hva((uint64_t)mods[0].mm_string);
+		cmd_src = (char *)hpa2hva((uint64_t)mods[0].mm_string);
 		(void)strncpy_s(cmd_dst, MEM_2K - off, cmd_src,
 				strnlen_s(cmd_src, MEM_2K - off));
 
@@ -262,6 +266,7 @@ int init_vm_boot_info(struct acrn_vm *vm)
 		/*parse other modules, like firmware /ramdisk */
 		parse_other_modules(vm, mods + 1, mbi->mi_mods_count - 1);
 	}
+	clac();
 	return 0;
 }
 #endif

@@ -5,35 +5,32 @@
 
 #include <hypervisor.h>
 
-/************************************************************************/
-/*  Memory pool declaration (block size = CONFIG_MALLOC_ALIGN)   */
-/************************************************************************/
+/*
+ * Memory pool declaration (block size = CONFIG_MALLOC_ALIGN)
+ */
 #define __bss_noinit __attribute__((__section__(".bss_noinit")))
 
-static uint8_t __bss_noinit
-Malloc_Heap[CONFIG_HEAP_SIZE] __aligned(CONFIG_MALLOC_ALIGN);
+static uint8_t __bss_noinit malloc_heap[CONFIG_HEAP_SIZE] __aligned(CONFIG_MALLOC_ALIGN);
 
-#define MALLOC_HEAP_BUFF_SIZE      CONFIG_MALLOC_ALIGN
-#define MALLOC_HEAP_TOTAL_BUFF     (CONFIG_HEAP_SIZE/MALLOC_HEAP_BUFF_SIZE)
-#define MALLOC_HEAP_BITMAP_SIZE \
-	INT_DIV_ROUNDUP(MALLOC_HEAP_TOTAL_BUFF, BITMAP_WORD_SIZE)
-static uint32_t Malloc_Heap_Bitmap[MALLOC_HEAP_BITMAP_SIZE];
-static uint32_t Malloc_Heap_Contiguity_Bitmap[MALLOC_HEAP_BITMAP_SIZE];
+#define MALLOC_HEAP_BUFF_SIZE	CONFIG_MALLOC_ALIGN
+#define MALLOC_HEAP_TOTAL_BUFF	(CONFIG_HEAP_SIZE/MALLOC_HEAP_BUFF_SIZE)
+#define MALLOC_HEAP_BITMAP_SIZE	INT_DIV_ROUNDUP(MALLOC_HEAP_TOTAL_BUFF, BITMAP_WORD_SIZE)
+static uint32_t malloc_heap_bitmap[MALLOC_HEAP_BITMAP_SIZE];
+static uint32_t malloc_heap_contiguity_bitmap[MALLOC_HEAP_BITMAP_SIZE];
 
-static struct mem_pool Memory_Pool = {
-	.start_addr = Malloc_Heap,
+static struct mem_pool memory_pool = {
+	.start_addr = malloc_heap,
 	.spinlock = {.head = 0U, .tail = 0U},
 	.size = CONFIG_HEAP_SIZE,
 	.buff_size = MALLOC_HEAP_BUFF_SIZE,
 	.total_buffs = MALLOC_HEAP_TOTAL_BUFF,
 	.bmp_size = MALLOC_HEAP_BITMAP_SIZE,
-	.bitmap = Malloc_Heap_Bitmap,
-	.contiguity_bitmap = Malloc_Heap_Contiguity_Bitmap
+	.bitmap = malloc_heap_bitmap,
+	.contiguity_bitmap = malloc_heap_contiguity_bitmap
 };
 
-static void *allocate_mem(struct mem_pool *pool, unsigned int num_bytes)
+static void *allocate_mem(struct mem_pool *pool, uint32_t num_bytes)
 {
-
 	void *memory = NULL;
 	uint32_t idx;
 	uint16_t bit_idx;
@@ -54,16 +51,13 @@ static void *allocate_mem(struct mem_pool *pool, unsigned int num_bytes)
 		/* Find the first occurrence of requested_buffs number of free
 		 * buffers. The 0th bit in bitmap represents a free buffer.
 		 */
-		for (bit_idx = ffz64(pool->bitmap[idx]);
-					bit_idx < BITMAP_WORD_SIZE; bit_idx++) {
+		for (bit_idx = ffz64(pool->bitmap[idx]); bit_idx < BITMAP_WORD_SIZE; bit_idx++) {
 			/* Check if selected buffer is free */
 			if ((pool->bitmap[idx] & (1U << bit_idx)) != 0U) {
 				continue;
 			}
 
-			/* Declare temporary variables to be used locally in
-			 * this block
-			 */
+			/* Declare temporary variables to be used locally in this block */
 			uint32_t i;
 			uint16_t tmp_bit_idx = bit_idx;
 			uint32_t tmp_idx = idx;
@@ -87,8 +81,7 @@ static void *allocate_mem(struct mem_pool *pool, unsigned int num_bytes)
 				}
 
 				/* Break if selected buffer is not free */
-				if ((pool->bitmap[tmp_idx]
-					& (1U << tmp_bit_idx)) != 0U) {
+				if ((pool->bitmap[tmp_idx] & (1U << tmp_bit_idx)) != 0U) {
 					break;
 				}
 			}
@@ -101,10 +94,7 @@ static void *allocate_mem(struct mem_pool *pool, unsigned int num_bytes)
 				 * selected free contiguous buffer in the
 				 * memory pool
 				 */
-				memory = (char *)pool->start_addr +
-					(pool->buff_size *
-					((idx * BITMAP_WORD_SIZE) +
-							bit_idx));
+				memory = pool->start_addr + pool->buff_size * (idx * BITMAP_WORD_SIZE + bit_idx);
 
 				/* Update allocation bitmaps information for
 				 * selected buffers
@@ -118,22 +108,20 @@ static void *allocate_mem(struct mem_pool *pool, unsigned int num_bytes)
 					/* Set contiguity information for this
 					 * buffer in contiguity-bitmap
 					 */
-					if (i < (requested_buffs - 1)) {
+					if (i < (requested_buffs - 1U)) {
 						/* Set contiguity bit to 1 if
 						 * this buffer is not the last
 						 * of selected contiguous
 						 * buffers array
 						 */
-						pool->contiguity_bitmap[idx] |=
-							(1U << bit_idx);
+						pool->contiguity_bitmap[idx] |= (1U << bit_idx);
 					} else {
 						/* Set contiguity bit to 0 if
 						 * this buffer is not the last
 						 * of selected contiguous
 						 * buffers array
 						 */
-						pool->contiguity_bitmap[idx] &=
-							~(1U << bit_idx);
+						pool->contiguity_bitmap[idx] &= ~(1U << bit_idx);
 					}
 
 					/* Check if bit_idx is out-of-range */
@@ -173,8 +161,7 @@ static void deallocate_mem(struct mem_pool *pool, const void *ptr)
 		spinlock_obtain(&pool->spinlock);
 
 		/* Map the buffer address to its index. */
-		buff_idx = ((char *)ptr - (char *)pool->start_addr) /
-			pool->buff_size;
+		buff_idx = (ptr - pool->start_addr) / pool->buff_size;
 
 		/* De-allocate all allocated contiguous memory buffers */
 		while (buff_idx < pool->total_buffs) {
@@ -210,19 +197,19 @@ static void deallocate_mem(struct mem_pool *pool, const void *ptr)
 }
 
 /*
- * The return address will be CPU_PAGE_SIZE aligned if 'num_bytes' is greater
- * than CPU_PAGE_SIZE.
+ * The return address will be PAGE_SIZE aligned if 'num_bytes' is greater
+ * than PAGE_SIZE.
  */
-void *malloc(unsigned int num_bytes)
+void *malloc(uint32_t num_bytes)
 {
 	void *memory = NULL;
 
 	/* Check if bytes requested extend page-size */
-	if (num_bytes < CPU_PAGE_SIZE) {
+	if (num_bytes < PAGE_SIZE) {
 		/*
 		 * Request memory allocation from smaller segmented memory pool
 		 */
-		memory = allocate_mem(&Memory_Pool, num_bytes);
+		memory = allocate_mem(&memory_pool, num_bytes);
 	}
 
 	/* Check if memory allocation is successful */
@@ -234,7 +221,7 @@ void *malloc(unsigned int num_bytes)
 	return memory;
 }
 
-void *calloc(unsigned int num_elements, unsigned int element_size)
+void *calloc(uint32_t num_elements, uint32_t element_size)
 {
 	void *memory = malloc(num_elements * element_size);
 
@@ -251,147 +238,62 @@ void *calloc(unsigned int num_elements, unsigned int element_size)
 void free(const void *ptr)
 {
 	/* Check if ptr belongs to 16-Bytes aligned Memory Pool */
-	if ((Memory_Pool.start_addr < ptr) &&
-		(ptr < (Memory_Pool.start_addr +
-			(Memory_Pool.total_buffs * Memory_Pool.buff_size)))) {
+	if ((memory_pool.start_addr < ptr) &&
+		(ptr < (memory_pool.start_addr + memory_pool.total_buffs * memory_pool.buff_size))) {
 		/* Free buffer in 16-Bytes aligned Memory Pool */
-		deallocate_mem(&Memory_Pool, ptr);
+		deallocate_mem(&memory_pool, ptr);
 	}
 }
 
-void *memchr(const void *void_s, int c, size_t n)
+static inline void memcpy_erms(void *d, const void *s, size_t slen)
 {
-	unsigned char val = (unsigned char)c;
-	unsigned char *ptr = (unsigned char *)void_s;
-	unsigned char *end = ptr + n;
-
-	while (ptr < end) {
-		if (*ptr == val) {
-			return ((void *)ptr);
-		}
-		ptr++;
-	}
-	return NULL;
+	asm volatile ("rep; movsb"
+		: "=&D"(d), "=&S"(s)
+		: "c"(slen), "0" (d), "1" (s)
+		: "memory");
 }
 
-/***********************************************************************
- *
- *   FUNCTION
- *
- *       memcpy_s
- *
- *   DESCRIPTION
- *
- *       Copies at most slen bytes from src address to dest address,
- *       up to dmax.
+/*
+ * @brief  Copies at most slen bytes from src address to dest address, up to dmax.
  *
  *   INPUTS
  *
- *       d                  pointer to Destination address
- *       dmax               maximum  length of dest
- *       s                  pointer to Source address
- *       slen               maximum number of bytes of src to copy
+ * @param[in] d        pointer to Destination address
+ * @param[in] dmax     maximum  length of dest
+ * @param[in] s        pointer to Source address
+ * @param[in] slen     maximum number of bytes of src to copy
  *
- *   OUTPUTS
+ * @return pointer to destination address.
  *
- *       void *             pointer to destination address if successful,
- *                          or else return null.
- *
- ***********************************************************************/
-void *memcpy_s(void *d, size_t dmax, const void *s, size_t slen_arg)
+ * @pre d and s will not overlap.
+ */
+void *memcpy_s(void *d, size_t dmax, const void *s, size_t slen)
 {
-	uint8_t *dest8;
-	uint8_t *src8;
-	size_t slen = slen_arg;
-
-	if ((slen == 0U) || (dmax == 0U) || (dmax < slen)) {
-		ASSERT(false);
-	}
-
-	if (((d > s) && (d <= ((s + slen) - 1U)))
-			|| ((d < s) && (s <= ((d + dmax) - 1U)))) {
-		ASSERT(false);
-	}
-
-	/* same memory block, no need to copy */
-	if (d == s) {
-		return d;
-	}
-
-	dest8 = (uint8_t *)d;
-	src8 = (uint8_t *)s;
-
-	/* small data block */
-	if (slen < 8U) {
-		while (slen != 0U) {
-			*dest8 = *src8;
-			dest8++;
-			src8++;
-			slen--;
-		}
-
-		return d;
-	}
-
-	/* make sure 8bytes-aligned for at least one addr. */
-	if ((!mem_aligned_check((uint64_t)src8, 8UL)) &&
-			(!mem_aligned_check((uint64_t)dest8, 8UL))) {
-		for (; (slen != 0U) && ((((uint64_t)src8) & 7UL) != 0UL);
-				slen--) {
-			*dest8 = *src8;
-			dest8++;
-			src8++;
+	if ((slen != 0U) && (dmax != 0U) && (dmax >= slen)) {
+		/* same memory block, no need to copy */
+		if (d != s) {
+			memcpy_erms(d, s, slen);
 		}
 	}
-
-	/* copy main data blocks, with rep prefix */
-	if (slen > 8U) {
-		uint32_t ecx;
-
-		asm volatile ("cld; rep; movsq"
-				: "=&c"(ecx), "=&D"(dest8), "=&S"(src8)
-				: "0" (slen >> 3), "1" (dest8), "2" (src8)
-				: "memory");
-
-		slen = slen & 0x7U;
-	}
-
-	/* tail bytes */
-	while (slen != 0U) {
-		*dest8 = *src8;
-		dest8++;
-		src8++;
-		slen--;
-	}
-
 	return d;
+}
+
+static inline void memset_erms(void *base, uint8_t v, size_t n)
+{
+	asm volatile("rep ; stosb"
+			: "+D"(base)
+			: "a" (v), "c"(n));
 }
 
 void *memset(void *base, uint8_t v, size_t n)
 {
-	uint8_t *dest_p;
-	size_t n_q;
-	size_t count;
+	/*
+	 * Some CPUs support enhanced REP MOVSB/STOSB feature. It is recommended
+	 * to use it when possible.
+	 */
+	if ((base != NULL) && (n != 0U)) {
+		memset_erms(base, v, n);
+        }
 
-	dest_p = (uint8_t *)base;
-
-	if ((dest_p == NULL) || (n == 0U)) {
-		return NULL;
-	}
-
-	/* do the few bytes to get uint64_t alignment */
-	count = n;
-	for (; (count != 0U) && (((uint64_t)dest_p & 7UL) != 0UL); count--) {
-		*dest_p = v;
-		dest_p++;
-	}
-
-	/* 64-bit mode */
-	n_q = count >> 3U;
-	asm volatile("cld ; rep ; stosq ; movl %3,%%ecx ; rep ; stosb"
-				: "+c"(n_q), "+D"(dest_p)
-				: "a" (v * 0x0101010101010101U),
-				"r"((unsigned int)count  & 7U));
-
-	return (void *)dest_p;
+	return base;
 }

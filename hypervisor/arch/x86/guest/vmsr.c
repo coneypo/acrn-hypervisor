@@ -7,32 +7,153 @@
 #include <hypervisor.h>
 #include <ucode.h>
 
-enum rw_mode {
-	DISABLE = 0U,
-	READ,
-	WRITE,
-	READ_WRITE
-};
+#define INTERCEPT_DISABLE		(0U)
+#define INTERCEPT_READ			(1U << 0U)
+#define INTERCEPT_WRITE			(1U << 1U)
+#define INTERCEPT_READ_WRITE		(INTERCEPT_READ | INTERCEPT_WRITE)
 
-/*MRS need to be emulated, the order in this array better as freq of ops*/
-static const uint32_t emulated_msrs[] = {
-	MSR_IA32_TSC_DEADLINE,  /* Enable TSC_DEADLINE VMEXIT */
-	MSR_IA32_BIOS_UPDT_TRIG, /* Enable MSR_IA32_BIOS_UPDT_TRIG */
-	MSR_IA32_BIOS_SIGN_ID, /* Enable MSR_IA32_BIOS_SIGN_ID */
-	MSR_IA32_TIME_STAMP_COUNTER,
+static const uint32_t emulated_guest_msrs[NUM_GUEST_MSRS] = {
+	/*
+	 * MSRs that trusty may touch and need isolation between secure and normal world
+	 * This may include MSR_IA32_STAR, MSR_IA32_LSTAR, MSR_IA32_FMASK,
+	 * MSR_IA32_KERNEL_GS_BASE, MSR_IA32_SYSENTER_ESP, MSR_IA32_SYSENTER_CS, MSR_IA32_SYSENTER_EIP
+	 *
+	 * Number of entries: NUM_WORLD_MSRS
+	 */
 	MSR_IA32_PAT,
-	MSR_IA32_APIC_BASE,
+	MSR_IA32_TSC_ADJUST,
 
-/* following MSR not emulated now */
-/*
- *	MSR_IA32_SYSENTER_CS,
- *	MSR_IA32_SYSENTER_ESP,
- *	MSR_IA32_SYSENTER_EIP,
- *	MSR_IA32_TSC_AUX,
- */
+	/*
+	 * MSRs don't need isolation between worlds
+	 * Number of entries: NUM_COMMON_MSRS
+	 */
+	MSR_IA32_TSC_DEADLINE,
+	MSR_IA32_BIOS_UPDT_TRIG,
+	MSR_IA32_BIOS_SIGN_ID,
+	MSR_IA32_TIME_STAMP_COUNTER,
+	MSR_IA32_APIC_BASE,
+	MSR_IA32_PERF_CTL
 };
 
-static const uint32_t x2apic_msrs[] = {
+#define NUM_MTRR_MSRS	13U
+static const uint32_t mtrr_msrs[NUM_MTRR_MSRS] = {
+	MSR_IA32_MTRR_CAP,
+	MSR_IA32_MTRR_DEF_TYPE,
+	MSR_IA32_MTRR_FIX64K_00000,
+	MSR_IA32_MTRR_FIX16K_80000,
+	MSR_IA32_MTRR_FIX16K_A0000,
+	MSR_IA32_MTRR_FIX4K_C0000,
+	MSR_IA32_MTRR_FIX4K_C8000,
+	MSR_IA32_MTRR_FIX4K_D0000,
+	MSR_IA32_MTRR_FIX4K_D8000,
+	MSR_IA32_MTRR_FIX4K_E0000,
+	MSR_IA32_MTRR_FIX4K_E8000,
+	MSR_IA32_MTRR_FIX4K_F0000,
+	MSR_IA32_MTRR_FIX4K_F8000
+};
+
+/* Following MSRs are intercepted, but it throws GPs for any guest accesses */
+#define NUM_UNSUPPORTED_MSRS	76U
+static const uint32_t unsupported_msrs[NUM_UNSUPPORTED_MSRS] = {
+	/* Variable MTRRs are not supported */
+	MSR_IA32_MTRR_PHYSBASE_0,
+	MSR_IA32_MTRR_PHYSMASK_0,
+	MSR_IA32_MTRR_PHYSBASE_1,
+	MSR_IA32_MTRR_PHYSMASK_1,
+	MSR_IA32_MTRR_PHYSBASE_2,
+	MSR_IA32_MTRR_PHYSMASK_2,
+	MSR_IA32_MTRR_PHYSBASE_3,
+	MSR_IA32_MTRR_PHYSMASK_3,
+	MSR_IA32_MTRR_PHYSBASE_4,
+	MSR_IA32_MTRR_PHYSMASK_4,
+	MSR_IA32_MTRR_PHYSBASE_5,
+	MSR_IA32_MTRR_PHYSMASK_5,
+	MSR_IA32_MTRR_PHYSBASE_6,
+	MSR_IA32_MTRR_PHYSMASK_6,
+	MSR_IA32_MTRR_PHYSBASE_7,
+	MSR_IA32_MTRR_PHYSMASK_7,
+	MSR_IA32_MTRR_PHYSBASE_8,
+	MSR_IA32_MTRR_PHYSMASK_8,
+	MSR_IA32_MTRR_PHYSBASE_9,
+	MSR_IA32_MTRR_PHYSMASK_9,
+
+	/* No level 2 VMX: CPUID.01H.ECX[5] */
+	MSR_IA32_VMX_BASIC,
+	MSR_IA32_VMX_PINBASED_CTLS,
+	MSR_IA32_VMX_PROCBASED_CTLS,
+	MSR_IA32_VMX_EXIT_CTLS,
+	MSR_IA32_VMX_ENTRY_CTLS,
+	MSR_IA32_VMX_MISC,
+	MSR_IA32_VMX_CR0_FIXED0,
+	MSR_IA32_VMX_CR0_FIXED1,
+	MSR_IA32_VMX_CR4_FIXED0,
+	MSR_IA32_VMX_CR4_FIXED1,
+	MSR_IA32_VMX_VMCS_ENUM,
+	MSR_IA32_VMX_PROCBASED_CTLS2,
+	MSR_IA32_VMX_EPT_VPID_CAP,
+	MSR_IA32_VMX_TRUE_PINBASED_CTLS,
+	MSR_IA32_VMX_TRUE_PROCBASED_CTLS,
+	MSR_IA32_VMX_TRUE_EXIT_CTLS,
+	MSR_IA32_VMX_TRUE_ENTRY_CTLS,
+	MSR_IA32_VMX_VMFUNC,
+
+	/* SGX disabled: CPUID.12H.EAX[0], CPUID.07H.ECX[30] */
+	MSR_IA32_SGXLEPUBKEYHASH0,
+	MSR_IA32_SGXLEPUBKEYHASH1,
+	MSR_IA32_SGXLEPUBKEYHASH2,
+	MSR_IA32_SGXLEPUBKEYHASH3,
+
+	/* SGX disabled : CPUID.07H.EBX[2] */
+	MSR_IA32_SGX_SVN_STATUS,
+
+	/* SGX disabled : CPUID.12H.EAX[0] */
+	MSR_SGXOWNEREPOCH0,
+	MSR_SGXOWNEREPOCH1,
+
+	/* Performance Counters and Events: CPUID.0AH.EAX[15:8] */
+	MSR_IA32_PMC0,
+	MSR_IA32_PMC1,
+	MSR_IA32_PMC2,
+	MSR_IA32_PMC3,
+	MSR_IA32_PMC4,
+	MSR_IA32_PMC5,
+	MSR_IA32_PMC6,
+	MSR_IA32_PMC7,
+	MSR_IA32_PERFEVTSEL0,
+	MSR_IA32_PERFEVTSEL1,
+	MSR_IA32_PERFEVTSEL2,
+	MSR_IA32_PERFEVTSEL3,
+	MSR_IA32_A_PMC0,
+	MSR_IA32_A_PMC1,
+	MSR_IA32_A_PMC2,
+	MSR_IA32_A_PMC3,
+	MSR_IA32_A_PMC4,
+	MSR_IA32_A_PMC5,
+	MSR_IA32_A_PMC6,
+	MSR_IA32_A_PMC7,
+	/* CPUID.0AH.EAX[7:0] */
+	MSR_IA32_FIXED_CTR_CTL,
+	MSR_IA32_PERF_GLOBAL_STATUS,
+	MSR_IA32_PERF_GLOBAL_CTRL,
+	MSR_IA32_PERF_GLOBAL_OVF_CTRL,
+	MSR_IA32_PERF_GLOBAL_STATUS_SET,
+	MSR_IA32_PERF_GLOBAL_INUSE,
+
+	/* QOS Configuration disabled: CPUID.10H.ECX[2] */
+	MSR_IA32_L3_QOS_CFG,
+	MSR_IA32_L2_QOS_CFG,
+
+	/* RDT-M disabled: CPUID.07H.EBX[12], CPUID.07H.EBX[15] */
+	MSR_IA32_QM_EVTSEL,
+	MSR_IA32_QM_CTR,
+	MSR_IA32_PQR_ASSOC
+
+	/* RDT-A disabled: CPUID.07H.EBX[12], CPUID.10H */
+	/* MSR 0xC90 ... 0xD8F, not in this array */
+};
+
+#define NUM_X2APIC_MSRS	44U
+static const uint32_t x2apic_msrs[NUM_X2APIC_MSRS] = {
 	MSR_IA32_EXT_XAPICID,
 	MSR_IA32_EXT_APIC_VERSION,
 	MSR_IA32_EXT_APIC_TPR,
@@ -79,39 +200,55 @@ static const uint32_t x2apic_msrs[] = {
 	MSR_IA32_EXT_APIC_SELF_IPI,
 };
 
-static void enable_msr_interception(uint8_t *bitmap, uint32_t msr_arg, enum rw_mode mode)
+/* emulated_guest_msrs[] shares same indexes with array vcpu->arch->guest_msrs[] */
+uint32_t vmsr_get_guest_msr_index(uint32_t msr)
 {
-	uint8_t *read_map;
-	uint8_t *write_map;
+	uint32_t index;
+
+	for (index = 0U; index < NUM_GUEST_MSRS; index++) {
+		if (emulated_guest_msrs[index] == msr) {
+			break;
+		}
+	}
+
+	if (index == NUM_GUEST_MSRS) {
+		pr_err("%s, MSR %x is not defined in array emulated_guest_msrs[]", __func__, msr);
+	}
+
+	return index;
+}
+
+static void enable_msr_interception(uint8_t *bitmap, uint32_t msr_arg, uint32_t mode)
+{
+	uint8_t *read_map = bitmap;
+	uint8_t *write_map = bitmap + 2048;
 	uint32_t msr = msr_arg;
 	uint8_t msr_bit;
 	uint32_t msr_index;
-	/* low MSR */
-	if (msr < 0x1FFFU) {
-		read_map = bitmap;
-		write_map = bitmap + 2048;
-	} else if ((msr >= 0xc0000000U) && (msr <= 0xc0001fffU)) {
-		read_map = bitmap + 1024;
-		write_map = bitmap + 3072;
-	} else {
-		pr_err("Invalid MSR");
-		return;
-	}
 
-	msr &= 0x1FFFU;
-	msr_bit = 1U << (msr & 0x7U);
-	msr_index = msr >> 3U;
+	if ((msr <= 0x1FFFU) || ((msr >= 0xc0000000U) && (msr <= 0xc0001fffU))) {
+		if ((msr & 0xc0000000U) != 0U) {
+			read_map = read_map + 1024;
+			write_map = write_map + 1024;
+		}
 
-	if ((mode & READ) == READ) {
-		read_map[msr_index] |= msr_bit;
-	} else {
-		read_map[msr_index] &= ~msr_bit;
-	}
+		msr &= 0x1FFFU;
+		msr_bit = 1U << (msr & 0x7U);
+		msr_index = msr >> 3U;
 
-	if ((mode & WRITE) == WRITE) {
-		write_map[msr_index] |= msr_bit;
+		if ((mode & INTERCEPT_READ) == INTERCEPT_READ) {
+			read_map[msr_index] |= msr_bit;
+		} else {
+			read_map[msr_index] &= ~msr_bit;
+		}
+
+		if ((mode & INTERCEPT_WRITE) == INTERCEPT_WRITE) {
+			write_map[msr_index] |= msr_bit;
+		} else {
+			write_map[msr_index] &= ~msr_bit;
+		}
 	} else {
-		write_map[msr_index] &= ~msr_bit;
+		pr_err("%s, Invalid MSR: 0x%x", __func__, msr);
 	}
 }
 
@@ -122,71 +259,68 @@ static void enable_msr_interception(uint8_t *bitmap, uint32_t msr_arg, enum rw_m
  * 0x802 and 0x83F, are not intercepted
  */
 
-static void intercept_x2apic_msrs(uint8_t *msr_bitmap_arg, enum rw_mode mode)
+static void intercept_x2apic_msrs(uint8_t *msr_bitmap_arg, uint32_t mode)
 {
 	uint8_t *msr_bitmap = msr_bitmap_arg;
 	uint32_t i;
 
-	for (i = 0U; i < ARRAY_SIZE(x2apic_msrs); i++) {
+	for (i = 0U; i < NUM_X2APIC_MSRS; i++) {
 		enable_msr_interception(msr_bitmap, x2apic_msrs[i], mode);
 	}
 }
 
+static void init_msr_area(struct acrn_vcpu *vcpu)
+{
+	vcpu->arch.msr_area.guest[MSR_AREA_TSC_AUX].msr_num = MSR_IA32_TSC_AUX;
+	vcpu->arch.msr_area.guest[MSR_AREA_TSC_AUX].value = vcpu->vcpu_id;
+	vcpu->arch.msr_area.host[MSR_AREA_TSC_AUX].msr_num = MSR_IA32_TSC_AUX;
+	vcpu->arch.msr_area.host[MSR_AREA_TSC_AUX].value = vcpu->pcpu_id;
+}
+
 void init_msr_emulation(struct acrn_vcpu *vcpu)
 {
-	uint32_t i;
-	uint32_t msrs_count =  ARRAY_SIZE(emulated_msrs);
+	uint32_t msr, i;
 	uint8_t *msr_bitmap;
 	uint64_t value64;
 
-	ASSERT(msrs_count == IDX_MAX_MSR,
-		"MSR ID should be matched with emulated_msrs");
-
-	/*msr bitmap, just allocated/init once, and used for all vm's vcpu*/
 	if (is_vcpu_bsp(vcpu)) {
 		msr_bitmap = vcpu->vm->arch_vm.msr_bitmap;
 
-		for (i = 0U; i < msrs_count; i++) {
-			enable_msr_interception(msr_bitmap, emulated_msrs[i], READ_WRITE);
+		for (i = 0U; i < NUM_GUEST_MSRS; i++) {
+			enable_msr_interception(msr_bitmap, emulated_guest_msrs[i], INTERCEPT_READ_WRITE);
 		}
 
-		enable_msr_interception(msr_bitmap, MSR_IA32_PERF_CTL, READ_WRITE);
-
-		/* below MSR protected from guest OS, if access to inject gp*/
-		enable_msr_interception(msr_bitmap, MSR_IA32_MTRR_CAP, READ_WRITE);
-		enable_msr_interception(msr_bitmap, MSR_IA32_MTRR_DEF_TYPE, READ_WRITE);
-
-		for (i = MSR_IA32_MTRR_PHYSBASE_0;
-			i <= MSR_IA32_MTRR_PHYSMASK_9; i++) {
-			enable_msr_interception(msr_bitmap, i, READ_WRITE);
+		for (i = 0U; i < NUM_MTRR_MSRS; i++) {
+			enable_msr_interception(msr_bitmap, mtrr_msrs[i], INTERCEPT_READ_WRITE);
 		}
 
-		enable_msr_interception(msr_bitmap, MSR_IA32_MTRR_FIX64K_00000, READ_WRITE);
-		enable_msr_interception(msr_bitmap, MSR_IA32_MTRR_FIX16K_80000, READ_WRITE);
-		enable_msr_interception(msr_bitmap, MSR_IA32_MTRR_FIX16K_A0000, READ_WRITE);
+		intercept_x2apic_msrs(msr_bitmap, INTERCEPT_READ_WRITE);
 
-		for (i = MSR_IA32_MTRR_FIX4K_C0000;
-			i <= MSR_IA32_MTRR_FIX4K_F8000; i++) {
-			enable_msr_interception(msr_bitmap, i, READ_WRITE);
+		for (i = 0U; i < NUM_UNSUPPORTED_MSRS; i++) {
+			enable_msr_interception(msr_bitmap, unsupported_msrs[i], INTERCEPT_READ_WRITE);
 		}
 
-		for (i = MSR_IA32_VMX_BASIC;
-			i <= MSR_IA32_VMX_TRUE_ENTRY_CTLS; i++) {
-			enable_msr_interception(msr_bitmap, i, READ_WRITE);
+		/* RDT-A disabled: CPUID.07H.EBX[12], CPUID.10H */
+		for (msr = MSR_IA32_L3_MASK_0; msr < MSR_IA32_BNDCFGS; msr++) {
+			enable_msr_interception(msr_bitmap, msr, INTERCEPT_READ_WRITE);
 		}
 
-		intercept_x2apic_msrs(msr_bitmap, READ_WRITE);
+		/* don't need to intercept rdmsr for these MSRs */
+		enable_msr_interception(msr_bitmap, MSR_IA32_TIME_STAMP_COUNTER, INTERCEPT_WRITE);
 	}
 
-	/* Set up MSR bitmap - pg 2904 24.6.9 */
+	/* Setup MSR bitmap - Intel SDM Vol3 24.6.9 */
 	value64 = hva2hpa(vcpu->vm->arch_vm.msr_bitmap);
 	exec_vmwrite64(VMX_MSR_BITMAP_FULL, value64);
 	pr_dbg("VMX_MSR_BITMAP: 0x%016llx ", value64);
+
+	/* Initialize the MSR save/store area */
+	init_msr_area(vcpu);
 }
 
-int rdmsr_vmexit_handler(struct acrn_vcpu *vcpu)
+int32_t rdmsr_vmexit_handler(struct acrn_vcpu *vcpu)
 {
-	int err = 0;
+	int32_t err = 0;
 	uint32_t msr;
 	uint64_t v = 0UL;
 
@@ -200,10 +334,9 @@ int rdmsr_vmexit_handler(struct acrn_vcpu *vcpu)
 		err = vlapic_rdmsr(vcpu, msr, &v);
 		break;
 	}
-	case MSR_IA32_TIME_STAMP_COUNTER:
+	case MSR_IA32_TSC_ADJUST:
 	{
-		/* Add the TSC_offset to host TSC to get guest TSC */
-		v = rdtsc() + exec_vmread64(VMX_TSC_OFFSET_FULL);
+		v = vcpu_get_guest_msr(vcpu, MSR_IA32_TSC_ADJUST);
 		break;
 	}
 	case MSR_IA32_MTRR_CAP:
@@ -221,9 +354,9 @@ int rdmsr_vmexit_handler(struct acrn_vcpu *vcpu)
 	case MSR_IA32_MTRR_FIX4K_F8000:
 	{
 #ifdef CONFIG_MTRR_ENABLED
-		v = mtrr_rdmsr(vcpu, msr);
+		v = read_vmtrr(vcpu, msr);
 #else
-		vcpu_inject_gp(vcpu, 0U);
+		err = -EACCES;
 #endif
 		break;
 	}
@@ -237,31 +370,9 @@ int rdmsr_vmexit_handler(struct acrn_vcpu *vcpu)
 		v = msr_read(msr);
 		break;
 	}
-
-	/* following MSR not emulated now just left for future */
-	case MSR_IA32_SYSENTER_CS:
-	{
-		v = (uint64_t)exec_vmread32(VMX_GUEST_IA32_SYSENTER_CS);
-		break;
-	}
-	case MSR_IA32_SYSENTER_ESP:
-	{
-		v = exec_vmread(VMX_GUEST_IA32_SYSENTER_ESP);
-		break;
-	}
-	case MSR_IA32_SYSENTER_EIP:
-	{
-		v = exec_vmread(VMX_GUEST_IA32_SYSENTER_EIP);
-		break;
-	}
 	case MSR_IA32_PAT:
 	{
 		v = vmx_rdmsr_pat(vcpu);
-		break;
-	}
-	case MSR_IA32_TSC_AUX:
-	{
-		v = vcpu->arch.msr_tsc_aux;
 		break;
 	}
 	case MSR_IA32_APIC_BASE:
@@ -275,13 +386,9 @@ int rdmsr_vmexit_handler(struct acrn_vcpu *vcpu)
 		if (is_x2apic_msr(msr)) {
 			err = vlapic_rdmsr(vcpu, msr, &v);
 		} else {
-			if (!(((msr >= MSR_IA32_MTRR_PHYSBASE_0) &&
-				(msr <= MSR_IA32_MTRR_PHYSMASK_9)) ||
-				((msr >= MSR_IA32_VMX_BASIC) &&
-				(msr <= MSR_IA32_VMX_TRUE_ENTRY_CTLS)))) {
-				pr_warn("rdmsr: %lx should not come here!", msr);
-			}
-			vcpu_inject_gp(vcpu, 0U);
+			pr_warn("%s(): vm%d vcpu%d reading MSR %lx not supported",
+				__func__, vcpu->vm->vm_id, vcpu->vcpu_id, msr);
+			err = -EACCES;
 			v = 0UL;
 		}
 		break;
@@ -297,9 +404,52 @@ int rdmsr_vmexit_handler(struct acrn_vcpu *vcpu)
 	return err;
 }
 
-int wrmsr_vmexit_handler(struct acrn_vcpu *vcpu)
+/*
+ * Intel SDM 17.17.3: If an execution of WRMSR to the
+ * IA32_TIME_STAMP_COUNTER MSR adds (or subtracts) value X from the
+ * TSC, the logical processor also adds (or subtracts) value X from
+ * the IA32_TSC_ADJUST MSR.
+ */
+static void set_guest_tsc(struct acrn_vcpu *vcpu, uint64_t guest_tsc)
 {
-	int err = 0;
+	uint64_t tsc_delta, tsc_offset_delta, tsc_adjust;
+
+	tsc_delta = guest_tsc - rdtsc();
+
+	/* the delta between new and existing TSC_OFFSET */
+	tsc_offset_delta = tsc_delta - exec_vmread64(VMX_TSC_OFFSET_FULL);
+
+	/* apply this delta to TSC_ADJUST */
+	tsc_adjust = vcpu_get_guest_msr(vcpu, MSR_IA32_TSC_ADJUST);
+	vcpu_set_guest_msr(vcpu, MSR_IA32_TSC_ADJUST, tsc_adjust + tsc_offset_delta);
+
+	/* write to VMCS because rdtsc and rdtscp are not intercepted */
+	exec_vmwrite64(VMX_TSC_OFFSET_FULL, tsc_delta);
+}
+
+/*
+ * Intel SDM 17.17.3: "If an execution of WRMSR to the IA32_TSC_ADJUST
+ * MSR adds (or subtracts) value X from that MSR, the logical
+ * processor also adds (or subtracts) value X from the TSC."
+ */
+static void set_guest_tsc_adjust(struct acrn_vcpu *vcpu, uint64_t tsc_adjust)
+{
+	uint64_t tsc_offset, tsc_adjust_delta;
+
+	/* delta of the new and existing IA32_TSC_ADJUST */
+	tsc_adjust_delta = tsc_adjust - vcpu_get_guest_msr(vcpu, MSR_IA32_TSC_ADJUST);
+
+	/* apply this delta to existing TSC_OFFSET */
+	tsc_offset = exec_vmread64(VMX_TSC_OFFSET_FULL);
+	exec_vmwrite64(VMX_TSC_OFFSET_FULL, tsc_offset + tsc_adjust_delta);
+
+	/* IA32_TSC_ADJUST is supposed to carry the value it's written to */
+	vcpu_set_guest_msr(vcpu, MSR_IA32_TSC_ADJUST, tsc_adjust);
+}
+
+int32_t wrmsr_vmexit_handler(struct acrn_vcpu *vcpu)
+{
+	int32_t err = 0;
 	uint32_t msr;
 	uint64_t v;
 
@@ -317,13 +467,16 @@ int wrmsr_vmexit_handler(struct acrn_vcpu *vcpu)
 		err = vlapic_wrmsr(vcpu, msr, v);
 		break;
 	}
-	case MSR_IA32_TIME_STAMP_COUNTER:
+	case MSR_IA32_TSC_ADJUST:
 	{
-		/*Caculate TSC offset from changed TSC MSR value*/
-		exec_vmwrite64(VMX_TSC_OFFSET_FULL, v - rdtsc());
+		set_guest_tsc_adjust(vcpu, v);
 		break;
 	}
-
+	case MSR_IA32_TIME_STAMP_COUNTER:
+	{
+		set_guest_tsc(vcpu, v);
+		break;
+	}
 	case MSR_IA32_MTRR_DEF_TYPE:
 	case MSR_IA32_MTRR_FIX64K_00000:
 	case MSR_IA32_MTRR_FIX16K_80000:
@@ -338,15 +491,10 @@ int wrmsr_vmexit_handler(struct acrn_vcpu *vcpu)
 	case MSR_IA32_MTRR_FIX4K_F8000:
 	{
 #ifdef CONFIG_MTRR_ENABLED
-		mtrr_wrmsr(vcpu, msr, v);
+		write_vmtrr(vcpu, msr, v);
 #else
-		vcpu_inject_gp(vcpu, 0U);
+		err = -EACCES;
 #endif
-		break;
-	}
-	case MSR_IA32_MTRR_CAP:
-	{
-		vcpu_inject_gp(vcpu, 0U);
 		break;
 	}
 	case MSR_IA32_BIOS_SIGN_ID:
@@ -369,36 +517,9 @@ int wrmsr_vmexit_handler(struct acrn_vcpu *vcpu)
 		msr_write(msr, v);
 		break;
 	}
-
-	/* following MSR not emulated now just left for future */
-	case MSR_IA32_SYSENTER_CS:
-	{
-		exec_vmwrite32(VMX_GUEST_IA32_SYSENTER_CS, (uint32_t)v);
-		break;
-	}
-	case MSR_IA32_SYSENTER_ESP:
-	{
-		exec_vmwrite(VMX_GUEST_IA32_SYSENTER_ESP, v);
-		break;
-	}
-	case MSR_IA32_SYSENTER_EIP:
-	{
-		exec_vmwrite(VMX_GUEST_IA32_SYSENTER_EIP, v);
-		break;
-	}
 	case MSR_IA32_PAT:
 	{
 		err = vmx_wrmsr_pat(vcpu, v);
-		break;
-	}
-	case MSR_IA32_GS_BASE:
-	{
-		exec_vmwrite(VMX_GUEST_GS_BASE, v);
-		break;
-	}
-	case MSR_IA32_TSC_AUX:
-	{
-		vcpu->arch.msr_tsc_aux = v;
 		break;
 	}
 	case MSR_IA32_APIC_BASE:
@@ -411,13 +532,9 @@ int wrmsr_vmexit_handler(struct acrn_vcpu *vcpu)
 		if (is_x2apic_msr(msr)) {
 			err = vlapic_wrmsr(vcpu, msr, v);
 		} else {
-			if (!(((msr >= MSR_IA32_MTRR_PHYSBASE_0) &&
-				(msr <= MSR_IA32_MTRR_PHYSMASK_9)) ||
-				((msr >= MSR_IA32_VMX_BASIC) &&
-				(msr <= MSR_IA32_VMX_TRUE_ENTRY_CTLS)))) {
-				pr_warn("wrmsr: %lx should not come here!", msr);
-			}
-			vcpu_inject_gp(vcpu, 0U);
+			pr_warn("%s(): vm%d vcpu%d writing MSR %lx not supported",
+				__func__, vcpu->vm->vm_id, vcpu->vcpu_id, msr);
+			err = -EACCES;
 		}
 		break;
 	}
@@ -428,26 +545,36 @@ int wrmsr_vmexit_handler(struct acrn_vcpu *vcpu)
 	return err;
 }
 
-void update_msr_bitmap_x2apic_apicv(struct acrn_vcpu *vcpu)
+void update_msr_bitmap_x2apic_apicv(const struct acrn_vcpu *vcpu)
 {
 	uint8_t *msr_bitmap;
 
 	msr_bitmap = vcpu->vm->arch_vm.msr_bitmap;
-	intercept_x2apic_msrs(msr_bitmap, WRITE);
-	enable_msr_interception(msr_bitmap, MSR_IA32_EXT_APIC_CUR_COUNT, READ);
 	/*
-	 * Open read-only interception for write-only
-	 * registers to inject gp on reads. EOI and Self-IPI
-	 * Writes are disabled for EOI, TPR and Self-IPI as
-	 * writes to them are virtualized with Register Virtualization
-	 * Refer to Section 29.1 in Intel SDM Vol. 3
+	 * For platforms that do not support register virtualization
+	 * all x2APIC MSRs need to intercepted. So no need to update
+	 * the MSR bitmap.
+	 *
+	 * TPR is virtualized even when register virtualization is not
+	 * supported
 	 */
-	enable_msr_interception(msr_bitmap, MSR_IA32_EXT_APIC_TPR, DISABLE);
-	enable_msr_interception(msr_bitmap, MSR_IA32_EXT_APIC_EOI, READ);
-	enable_msr_interception(msr_bitmap, MSR_IA32_EXT_APIC_SELF_IPI, READ);
+	if (is_apicv_reg_virtualization_supported()) {
+		intercept_x2apic_msrs(msr_bitmap, INTERCEPT_WRITE);
+		enable_msr_interception(msr_bitmap, MSR_IA32_EXT_APIC_CUR_COUNT, INTERCEPT_READ);
+		/*
+		 * Open read-only interception for write-only
+		 * registers to inject gp on reads. EOI and Self-IPI
+		 * Writes are disabled for EOI, TPR and Self-IPI as
+		 * writes to them are virtualized with Register Virtualization
+		 * Refer to Section 29.1 in Intel SDM Vol. 3
+		 */
+		enable_msr_interception(msr_bitmap, MSR_IA32_EXT_APIC_TPR, INTERCEPT_DISABLE);
+		enable_msr_interception(msr_bitmap, MSR_IA32_EXT_APIC_EOI, INTERCEPT_READ);
+		enable_msr_interception(msr_bitmap, MSR_IA32_EXT_APIC_SELF_IPI, INTERCEPT_READ);
+	}
 }
 
-void update_msr_bitmap_x2apic_passthru(struct acrn_vcpu *vcpu)
+void update_msr_bitmap_x2apic_passthru(const struct acrn_vcpu *vcpu)
 {
 	uint32_t msr;
 	uint8_t *msr_bitmap;
@@ -455,8 +582,8 @@ void update_msr_bitmap_x2apic_passthru(struct acrn_vcpu *vcpu)
 	msr_bitmap = vcpu->vm->arch_vm.msr_bitmap;
 	for (msr = MSR_IA32_EXT_XAPICID;
 			msr <= MSR_IA32_EXT_APIC_SELF_IPI; msr++) {
-		enable_msr_interception(msr_bitmap, msr, DISABLE);
+		enable_msr_interception(msr_bitmap, msr, INTERCEPT_DISABLE);
 	}
-	enable_msr_interception(msr_bitmap, MSR_IA32_EXT_APIC_ICR, WRITE);
-	enable_msr_interception(msr_bitmap, MSR_IA32_TSC_DEADLINE, DISABLE);
+	enable_msr_interception(msr_bitmap, MSR_IA32_EXT_APIC_ICR, INTERCEPT_WRITE);
+	enable_msr_interception(msr_bitmap, MSR_IA32_TSC_DEADLINE, INTERCEPT_DISABLE);
 }

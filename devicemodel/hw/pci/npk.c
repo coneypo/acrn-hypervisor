@@ -89,6 +89,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <dirent.h>
+#include <string.h>
 
 #include "dm.h"
 #include "vmmapi.h"
@@ -178,13 +179,14 @@ static inline int valid_param(uint32_t m_off, uint32_t m_num)
  */
 static int pci_npk_init(struct vmctx *ctx, struct pci_vdev *dev, char *opts)
 {
-	int i, b, s, f, fd, ret, error = -1;
+	int i, b, s, f, fd, ret, rc, error = -1;
 	DIR *dir;
 	struct dirent *dent;
 	char name[PATH_MAX];
 	uint8_t h_cfg[PCI_REGMAX + 1];
 	uint32_t m_off, m_num;
 	struct npk_reg_default_val *d;
+	char *cp;
 
 	if (npk_in_use) {
 		WPRINTF(("NPK is already in use\n"));
@@ -211,8 +213,8 @@ static int pci_npk_init(struct vmctx *ctx, struct pci_vdev *dev, char *opts)
 	 */
 
 	/* get the master offset and the number for this guest */
-	if ((opts == NULL) || (sscanf(opts, "%u/%u", &m_off, &m_num) != 2)
-				|| !valid_param(m_off, m_num)) {
+	if ((opts == NULL) || dm_strtoui(opts, &cp, 10, &m_off) || *cp != '/' ||
+			dm_strtoui(cp + 1, &cp, 10, &m_num) || !valid_param(m_off, m_num)) {
 		m_off = 256;
 		m_num = 256;
 	}
@@ -226,7 +228,8 @@ static int pci_npk_init(struct vmctx *ctx, struct pci_vdev *dev, char *opts)
 
 	/* traverse the driver folder, and try to find the NPK BDF# */
 	while ((dent = readdir(dir)) != NULL) {
-		if (sscanf(dent->d_name, "0000:%x:%x.%x", &b, &s, &f) != 3)
+		if (strncmp(dent->d_name, "0000:", 5) != 0 ||
+			parse_bdf((dent->d_name + 5), &b, &s, &f, 16) != 0)
 			continue;
 		else
 			break;
@@ -239,7 +242,10 @@ static int pci_npk_init(struct vmctx *ctx, struct pci_vdev *dev, char *opts)
 	}
 
 	/* read the host NPK configuration space */
-	sprintf(name, "%s/%s/config", NPK_DRV_SYSFS_PATH, dent->d_name);
+	rc = snprintf(name, PATH_MAX, "%s/%s/config", NPK_DRV_SYSFS_PATH,
+			dent->d_name);
+	if (rc > PATH_MAX)
+		WPRINTF(("NPK device name too long\n"));
 	fd = open(name, O_RDONLY);
 	if (fd == -1) {
 		WPRINTF(("Cannot open host NPK config\n"));

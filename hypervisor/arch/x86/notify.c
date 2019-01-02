@@ -35,12 +35,11 @@ void smp_call_function(uint64_t mask, smp_call_func_t func, void *data)
 	struct smp_call_info_data *smp_call;
 
 	/* wait for previous smp call complete, which may run on other cpus */
-	while (atomic_cmpxchg64(&smp_call_mask, 0UL, mask & INVALID_BIT_INDEX)
-									!= 0UL);
+	while (atomic_cmpxchg64(&smp_call_mask, 0UL, mask & INVALID_BIT_INDEX) != 0UL);
 	pcpu_id = ffs64(mask);
 	while (pcpu_id != INVALID_BIT_INDEX) {
 		bitmap_clear_nolock(pcpu_id, &mask);
-		if (bitmap_test(pcpu_id, &pcpu_active_bitmap)) {
+		if (is_pcpu_active(pcpu_id)) {
 			smp_call = &per_cpu(smp_call_info, pcpu_id);
 			smp_call->func = func;
 			smp_call->data = data;
@@ -56,40 +55,35 @@ void smp_call_function(uint64_t mask, smp_call_func_t func, void *data)
 	wait_sync_change(&smp_call_mask, 0UL);
 }
 
-static int request_notification_irq(irq_action_t func, void *data)
+static int32_t request_notification_irq(irq_action_t func, void *data)
 {
 	int32_t retval;
 
 	if (notification_irq != IRQ_INVALID) {
-		pr_info("%s, Notification vector already allocated on this CPU",
-				__func__);
-		return -EBUSY;
+		pr_info("%s, Notification vector already allocated on this CPU", __func__);
+		retval = -EBUSY;
+	} else {
+		/* all cpu register the same notification vector */
+		retval = request_irq(NOTIFY_IRQ, func, data, IRQF_NONE);
+		if (retval < 0) {
+			pr_err("Failed to add notify isr");
+			retval = -ENODEV;
+		} else {
+			notification_irq = (uint32_t)retval;
+		}
 	}
 
-	/* all cpu register the same notification vector */
-	retval = request_irq(NOTIFY_IRQ, func, data, IRQF_NONE);
-	if (retval < 0) {
-		pr_err("Failed to add notify isr");
-		return -ENODEV;
-	}
-
-	notification_irq = (uint32_t)retval;
-
-	return 0;
+	return retval;
 }
 
+/*
+ * @pre be called only by BSP initialization process
+ */
 void setup_notification(void)
 {
-	uint16_t cpu = get_cpu_id();
-
-	if (cpu > 0U) {
-		return;
-	}
-
 	/* support IPI notification, VM0 will register all CPU */
 	if (request_notification_irq(kick_notification, NULL) < 0) {
 		pr_err("Failed to setup notification");
-		return;
 	}
 
 	dev_dbg(ACRN_DBG_PTIRQ, "NOTIFY: irq[%d] setup vector %x",
@@ -111,6 +105,5 @@ void setup_posted_intr_notification(void)
 			posted_intr_notification,
 			NULL, IRQF_NONE) < 0) {
 		pr_err("Failed to setup posted-intr notification");
-		return;
 	}
 }

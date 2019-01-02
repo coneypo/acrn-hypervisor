@@ -874,7 +874,7 @@ next:
 	if (ncq && first)
 		ahci_write_fis_d2h_ncq(p, slot);
 
-	err = blockif_delete(p->bctx, breq);
+	err = blockif_discard(p->bctx, breq);
 	assert(err == 0);
 }
 
@@ -943,7 +943,7 @@ ahci_handle_read_log(struct ahci_port *p, int slot, uint8_t *cfis)
 		memcpy(buf8, p->err_cfis, sizeof(p->err_cfis));
 		ahci_checksum(buf8, sizeof(buf));
 	} else if (cfis[4] == 0x13) {	/* SATA NCQ Send and Receive Log */
-		if (blockif_candelete(p->bctx) && !blockif_is_ro(p->bctx)) {
+		if (blockif_candiscard(p->bctx) && !blockif_is_ro(p->bctx)) {
 			buf[0x00] = 1;	/* SFQ DSM supported */
 			buf[0x01] = 1;	/* SFQ DSM TRIM supported */
 		}
@@ -971,12 +971,12 @@ handle_identify(struct ahci_port *p, int slot, uint8_t *cfis)
 	} else {
 		uint16_t buf[256];
 		uint64_t sectors;
-		int sectsz, psectsz, psectoff, candelete, ro;
+		int sectsz, psectsz, psectoff, candiscard, ro;
 		uint16_t cyl;
 		uint8_t sech, heads;
 
 		ro = blockif_is_ro(p->bctx);
-		candelete = blockif_candelete(p->bctx);
+		candiscard = blockif_candiscard(p->bctx);
 		sectsz = blockif_sectsz(p->bctx);
 		sectors = blockif_size(p->bctx) / sectsz;
 		blockif_chs(p->bctx, &cyl, &heads, &sech);
@@ -1036,7 +1036,7 @@ handle_identify(struct ahci_port *p, int slot, uint8_t *cfis)
 		buf[101] = (sectors >> 16);
 		buf[102] = (sectors >> 32);
 		buf[103] = (sectors >> 48);
-		if (candelete && !ro) {
+		if (candiscard && !ro) {
 			buf[69] |= ATA_SUPPORT_RZAT | ATA_SUPPORT_DRAT;
 			buf[105] = 1;
 			buf[169] = ATA_SUPPORT_DSM_TRIM;
@@ -2307,7 +2307,7 @@ pci_ahci_init(struct vmctx *ctx, struct pci_vdev *dev, char *opts, int atapi)
 	char bident[16];
 	struct blockif_ctxt *bctxt;
 	struct pci_ahci_vdev *ahci_dev;
-	int ret, slots;
+	int ret, slots, rc;
 	uint8_t p;
 	MD5_CTX mdctx;
 	u_char digest[16];
@@ -2315,6 +2315,7 @@ pci_ahci_init(struct vmctx *ctx, struct pci_vdev *dev, char *opts, int atapi)
 
 	ret = 0;
 
+#define MAX_OPTS_LEN 256
 #ifdef AHCI_DEBUG
 	dbg = fopen("/tmp/log", "w+");
 #endif
@@ -2376,11 +2377,14 @@ pci_ahci_init(struct vmctx *ctx, struct pci_vdev *dev, char *opts, int atapi)
 		 * Use parts of the md5 sum of the filename
 		 */
 		MD5_Init(&mdctx);
-		MD5_Update(&mdctx, opts, strlen(opts));
+		MD5_Update(&mdctx, opts, strnlen(opts, MAX_OPTS_LEN));
 		MD5_Final(digest, &mdctx);
-		sprintf(ahci_dev->port[p].ident,
+		rc = snprintf(ahci_dev->port[p].ident,
+			sizeof(ahci_dev->port[p].ident),
 			"ACRN--%02X%02X-%02X%02X-%02X%02X", digest[0],
 			digest[1], digest[2], digest[3], digest[4], digest[5]);
+		if (rc > sizeof(ahci_dev->port[p].ident))
+			WPRINTF("%s: digest is longer than ident\n", __func__);
 
 		/*
 		 * Allocate blockif request structures and add them

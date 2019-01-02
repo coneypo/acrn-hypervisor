@@ -7,6 +7,7 @@
 #include <hypervisor.h>
 #include <schedule.h>
 #include <vm0_boot.h>
+#include <security.h>
 
 vm_sw_loader_t vm_sw_loader;
 
@@ -146,16 +147,25 @@ inline void vcpu_set_cr4(struct acrn_vcpu *vcpu, uint64_t val)
 	vmx_write_cr4(vcpu, val);
 }
 
-inline uint64_t vcpu_get_pat_ext(const struct acrn_vcpu *vcpu)
+uint64_t vcpu_get_guest_msr(const struct acrn_vcpu *vcpu, uint32_t msr)
 {
-	return vcpu->arch.contexts[vcpu->arch.cur_context].
-		ext_ctx.ia32_pat;
+	uint32_t index = vmsr_get_guest_msr_index(msr);
+	uint64_t val = 0UL;
+
+	if (index < NUM_GUEST_MSRS) {
+		val = vcpu->arch.guest_msrs[index];
+	}
+
+	return val;
 }
 
-inline void vcpu_set_pat_ext(struct acrn_vcpu *vcpu, uint64_t val)
+void vcpu_set_guest_msr(struct acrn_vcpu *vcpu, uint32_t msr, uint64_t val)
 {
-	vcpu->arch.contexts[vcpu->arch.cur_context].ext_ctx.ia32_pat
-		= val;
+	uint32_t index = vmsr_get_guest_msr_index(msr);
+
+	if (index < NUM_GUEST_MSRS) {
+		vcpu->arch.guest_msrs[index] = val;
+	}
 }
 
 struct acrn_vcpu *get_ever_run_vcpu(uint16_t pcpu_id)
@@ -313,7 +323,7 @@ void set_ap_entry(struct acrn_vcpu *vcpu, uint64_t entry)
  *     for physical CPU 1 : vcpu->pcpu_id = 1, vcpu->vcpu_id = 1, vmid = 1;
  *
  ***********************************************************************/
-int create_vcpu(uint16_t pcpu_id, struct acrn_vm *vm, struct acrn_vcpu **rtn_vcpu_handle)
+int32_t create_vcpu(uint16_t pcpu_id, struct acrn_vm *vm, struct acrn_vcpu **rtn_vcpu_handle)
 {
 	struct acrn_vcpu *vcpu;
 	uint16_t vcpu_id;
@@ -368,7 +378,7 @@ int create_vcpu(uint16_t pcpu_id, struct acrn_vm *vm, struct acrn_vcpu **rtn_vcp
 	vlapic_create(vcpu);
 
 #ifdef CONFIG_MTRR_ENABLED
-	init_mtrr(vcpu);
+	init_vmtrr(vcpu);
 #endif
 
 	/* Populate the return handle */
@@ -390,13 +400,14 @@ int create_vcpu(uint16_t pcpu_id, struct acrn_vm *vm, struct acrn_vcpu **rtn_vcp
 /*
  *  @pre vcpu != NULL
  */
-int run_vcpu(struct acrn_vcpu *vcpu)
+int32_t run_vcpu(struct acrn_vcpu *vcpu)
 {
 	uint32_t instlen, cs_attr;
 	uint64_t rip, ia32_efer, cr0;
 	struct run_context *ctx =
 		&vcpu->arch.contexts[vcpu->arch.cur_context].run_ctx;
 	int64_t status = 0;
+	int32_t ibrs_type = get_ibrs_type();
 
 	if (bitmap_test_and_clear_lock(CPU_REG_RIP, &vcpu->reg_updated))
 		exec_vmwrite(VMX_GUEST_RIP, ctx->rip);
@@ -490,7 +501,7 @@ int run_vcpu(struct acrn_vcpu *vcpu)
 	return status;
 }
 
-int shutdown_vcpu(__unused struct acrn_vcpu *vcpu)
+int32_t shutdown_vcpu(__unused struct acrn_vcpu *vcpu)
 {
 	/* TODO : Implement VCPU shutdown sequence */
 
@@ -513,7 +524,7 @@ void offline_vcpu(struct acrn_vcpu *vcpu)
  */
 void reset_vcpu(struct acrn_vcpu *vcpu)
 {
-	int i;
+	int32_t i;
 	struct acrn_vlapic *vlapic;
 
 	pr_dbg("vcpu%hu reset", vcpu->vcpu_id);
@@ -535,7 +546,7 @@ void reset_vcpu(struct acrn_vcpu *vcpu)
 	vcpu->arch.cur_context = NORMAL_WORLD;
 	vcpu->arch.irq_window_enabled = 0;
 	vcpu->arch.inject_event_pending = false;
-	(void)memset(vcpu->arch.vmcs, 0U, CPU_PAGE_SIZE);
+	(void)memset(vcpu->arch.vmcs, 0U, PAGE_SIZE);
 
 	for (i = 0; i < NR_WORLD; i++) {
 		(void)memset(&vcpu->arch.contexts[i], 0U,
@@ -561,16 +572,16 @@ void pause_vcpu(struct acrn_vcpu *vcpu, enum vcpu_state new_state)
 	vcpu->state = new_state;
 
 	if (atomic_load32(&vcpu->running) == 1U) {
-		remove_vcpu_from_runqueue(vcpu);
-		make_reschedule_request(vcpu);
+		remove_from_cpu_runqueue(&vcpu->sched_obj, vcpu->pcpu_id);
+		make_reschedule_request(vcpu->pcpu_id);
 		release_schedule_lock(vcpu->pcpu_id);
 
 		if (vcpu->pcpu_id != pcpu_id) {
 			while (atomic_load32(&vcpu->running) == 1U)
-				__asm__ __volatile("pause" ::: "memory");
+				asm_pause();
 		}
 	} else {
-		remove_vcpu_from_runqueue(vcpu);
+		remove_from_cpu_runqueue(&vcpu->sched_obj, vcpu->pcpu_id);
 		release_schedule_lock(vcpu->pcpu_id);
 	}
 }
@@ -583,10 +594,38 @@ void resume_vcpu(struct acrn_vcpu *vcpu)
 	vcpu->state = vcpu->prev_state;
 
 	if (vcpu->state == VCPU_RUNNING) {
-		add_vcpu_to_runqueue(vcpu);
-		make_reschedule_request(vcpu);
+		add_to_cpu_runqueue(&vcpu->sched_obj, vcpu->pcpu_id);
+		make_reschedule_request(vcpu->pcpu_id);
 	}
 	release_schedule_lock(vcpu->pcpu_id);
+}
+
+static void context_switch_out(struct sched_object *prev)
+{
+	struct acrn_vcpu *vcpu = list_entry(prev, struct acrn_vcpu, sched_obj);
+
+	/* cancel event(int, gp, nmi and exception) injection */
+	cancel_event_injection(vcpu);
+
+	atomic_store32(&vcpu->running, 0U);
+	/* do prev vcpu context switch out */
+	/* For now, we don't need to invalid ept.
+	 * But if we have more than one vcpu on one pcpu,
+	 * we need add ept invalid operation here.
+	 */
+}
+
+static void context_switch_in(struct sched_object *next)
+{
+	struct acrn_vcpu *vcpu = list_entry(next, struct acrn_vcpu, sched_obj);
+
+	atomic_store32(&vcpu->running, 1U);
+	/* FIXME:
+	 * Now, we don't need to load new vcpu VMCS because
+	 * we only do switch between vcpu loop and idle loop.
+	 * If we have more than one vcpu on on pcpu, need to
+	 * add VMCS load operation here.
+	 */
 }
 
 void schedule_vcpu(struct acrn_vcpu *vcpu)
@@ -595,15 +634,15 @@ void schedule_vcpu(struct acrn_vcpu *vcpu)
 	pr_dbg("vcpu%hu scheduled", vcpu->vcpu_id);
 
 	get_schedule_lock(vcpu->pcpu_id);
-	add_vcpu_to_runqueue(vcpu);
-	make_reschedule_request(vcpu);
+	add_to_cpu_runqueue(&vcpu->sched_obj, vcpu->pcpu_id);
+	make_reschedule_request(vcpu->pcpu_id);
 	release_schedule_lock(vcpu->pcpu_id);
 }
 
 /* help function for vcpu create */
-int prepare_vcpu(struct acrn_vm *vm, uint16_t pcpu_id)
+int32_t prepare_vcpu(struct acrn_vm *vm, uint16_t pcpu_id)
 {
-	int ret = 0;
+	int32_t ret = 0;
 	struct acrn_vcpu *vcpu = NULL;
 
 	ret = create_vcpu(pcpu_id, vm, &vcpu);
@@ -611,13 +650,12 @@ int prepare_vcpu(struct acrn_vm *vm, uint16_t pcpu_id)
 		return ret;
 	}
 
-	/* init_vmcs is delayed to vcpu vmcs launch first time */
-	/* initialize the vcpu tsc aux */
-	vcpu->msr_tsc_aux_guest = vcpu->vcpu_id;
-
 	set_pcpu_used(pcpu_id);
 
-	INIT_LIST_HEAD(&vcpu->run_list);
+	INIT_LIST_HEAD(&vcpu->sched_obj.run_list);
+	vcpu->sched_obj.thread = vcpu_thread;
+	vcpu->sched_obj.prepare_switch_out = context_switch_out;
+	vcpu->sched_obj.prepare_switch_in = context_switch_in;
 
 	return ret;
 }

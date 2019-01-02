@@ -47,7 +47,7 @@ static int virtio_input_debug;
 /*
  * Host capabilities
  */
-#define VIRTIO_INPUT_S_HOSTCAPS		(ACRN_VIRTIO_F_VERSION_1)
+#define VIRTIO_INPUT_S_HOSTCAPS		(1UL << VIRTIO_F_VERSION_1)
 
 enum virtio_input_config_select {
 	VIRTIO_INPUT_CFG_UNSET		= 0x00,
@@ -170,7 +170,7 @@ virtio_input_set_status(void *vdev, uint64_t status)
 {
 	struct virtio_input *vi = vdev;
 
-	if (status & VIRTIO_CR_STATUS_DRIVER_OK) {
+	if (status & VIRTIO_CONFIG_S_DRIVER_OK) {
 		if (!vi->ready)
 			vi->ready = true;
 	}
@@ -214,23 +214,19 @@ virtio_input_ignore_event(struct virtio_input_event *event)
 	if (!event)
 		return true;
 
-	/* kernel commit 29cc309d8bf19a36c5196bf626662319af6e3c0b
-	 * (HID: hid-multitouch: forward MSC_TIMESTAMP)
-	 * since kernel 4.15
-	 * (EV_MSC, MSC_TIMESTAMP) is added to each frame just before
-	 * the SYN event. EV_MSC is configured as INPUT_PASS_TO_ALL.
-	 * In the use case of virtio-input, there is a loop as follows:
-	 * - A mt frame with (EV_MSC, MSC_TIMESTAMP) is passed to FE.
-	 * - FE will call virtinput_status to pass (EV_MSC, MSC_TIMESTAMP)
-	 *   back to BE.
-	 * - BE writes this event to evdev. Because (EV_MSC, MSC_TIMESTAMP)
+	/*
+	 * EV_MSC is configured as INPUT_PASS_TO_ALL. In the use case of
+	 * virtio-input, there is a loop as follows:
+	 * - A mt frame with (EV_MSC,*,*) is passed to FE.
+	 * - FE will call virtinput_status to pass (EV_MSC,*,*) back to BE.
+	 * - BE writes this event to evdev. Because (EV_MSC,*,*)
 	 *   is configured as INPUT_PASS_TO_ALL, it will be written into
 	 *   the event buffer of evdev then be read out by BE without
 	 *   SYN followed.
-	 * - Each mt frame will introduce one (EV_MSC, MSC_TIMESTAMP).
+	 * - Each mt frame will introduce one (EV_MSC,*,*).
 	 *   Later the frame becomes larger and larger...
 	 */
-	if ((event->type == EV_MSC) && (event->code == MSC_TIMESTAMP))
+	if (event->type == EV_MSC)
 		return true;
 	return false;
 }
@@ -547,12 +543,32 @@ virtio_input_get_config(struct virtio_input *vi, uint8_t select,
 	return found;
 }
 
+static void
+virtio_input_teardown(void *param)
+{
+	struct virtio_input *vi;
+
+	vi = (struct virtio_input *)param;
+	if (vi) {
+		pthread_mutex_destroy(&vi->mtx);
+		if (vi->event_queue)
+			free(vi->event_queue);
+		if (vi->fd > 0)
+			close(vi->fd);
+		if (vi->evdev)
+			free(vi->evdev);
+		if (vi->serial)
+			free(vi->serial);
+		free(vi);
+		vi = NULL;
+	}
+}
+
 static int
 virtio_input_init(struct vmctx *ctx, struct pci_vdev *dev, char *opts)
 {
 	struct virtio_input *vi;
 	pthread_mutexattr_t attr;
-	bool mutex_initialized = false;
 	char *opt;
 	int flags, ver;
 	int rc;
@@ -574,27 +590,27 @@ virtio_input_init(struct vmctx *ctx, struct pci_vdev *dev, char *opts)
 	opt = strsep(&opts, ",");
 	if (!opt) {
 		WPRINTF(("%s: evdev path is NULL\n", __func__));
-		goto fail;
+		goto opt_fail;
 	}
 
 	vi->evdev = strdup(opt);
 	if (!vi->evdev) {
 		WPRINTF(("%s: strdup failed\n", __func__));
-		goto fail;
+		goto opt_fail;
 	}
 
 	if (opts) {
 		vi->serial = strdup(opts);
 		if (!vi->serial) {
 			WPRINTF(("%s: strdup serial failed\n", __func__));
-			goto fail;
+			goto serial_fail;
 		}
 	}
 
 	vi->fd = open(vi->evdev, O_RDWR);
 	if (vi->fd < 0) {
 		WPRINTF(("open %s failed %d\n", vi->evdev, errno));
-		goto fail;
+		goto open_fail;
 	}
 	flags = fcntl(vi->fd, F_GETFL);
 	fcntl(vi->fd, F_SETFL, flags | O_NONBLOCK);
@@ -602,13 +618,13 @@ virtio_input_init(struct vmctx *ctx, struct pci_vdev *dev, char *opts)
 	rc = ioctl(vi->fd, EVIOCGVERSION, &ver); /* is it a evdev device? */
 	if (rc < 0) {
 		WPRINTF(("%s: get version failed\n", vi->evdev));
-		goto fail;
+		goto evdev_fail;
 	}
 
 	rc = ioctl(vi->fd, EVIOCGRAB, 1); /* exclusive access */
 	if (rc < 0) {
 		WPRINTF(("%s: grab device failed %d\n", vi->evdev, errno));
-		goto fail;
+		goto evdev_fail;
 	}
 
 	/* init mutex attribute properly to avoid deadlock */
@@ -623,7 +639,6 @@ virtio_input_init(struct vmctx *ctx, struct pci_vdev *dev, char *opts)
 	if (rc)
 		DPRINTF(("vtinput: pthread_mutex_init failed with "
 			"error %d!\n", rc));
-	mutex_initialized = (rc == 0) ? true : false;
 
 	vi->event_qsize = VIRTIO_INPUT_PACKET_SIZE;
 	vi->event_qindex = 0;
@@ -631,16 +646,17 @@ virtio_input_init(struct vmctx *ctx, struct pci_vdev *dev, char *opts)
 		sizeof(struct virtio_input_event_elem));
 	if (!vi->event_queue) {
 		WPRINTF(("vtinput: could not alloc event queue buf\n"));
-		goto fail;
+		goto evqueue_fail;
 	}
 
-	vi->mevp = mevent_add(vi->fd, EVF_READ, virtio_input_read_event, vi);
+	vi->mevp = mevent_add(vi->fd, EVF_READ, virtio_input_read_event, vi,
+		virtio_input_teardown, vi);
 	if (vi->mevp == NULL) {
 		WPRINTF(("vtinput: could not register event\n"));
-		goto fail;
+		goto mevent_fail;
 	}
 
-	virtio_linkup(&vi->base, &virtio_input_ops, vi, dev, vi->queues);
+	virtio_linkup(&vi->base, &virtio_input_ops, vi, dev, vi->queues, BACKEND_VBSU);
 	vi->base.mtx = &vi->mtx;
 	vi->base.device_caps = VIRTIO_INPUT_S_HOSTCAPS;
 
@@ -669,32 +685,29 @@ virtio_input_init(struct vmctx *ctx, struct pci_vdev *dev, char *opts)
 	return rc;
 
 fail:
-	if (vi) {
-		if (mutex_initialized)
-			pthread_mutex_destroy(&vi->mtx);
-		if (vi->event_queue) {
-			free(vi->event_queue);
-			vi->event_queue = NULL;
-		}
-		if (vi->mevp) {
-			mevent_delete(vi->mevp);
-			vi->mevp = NULL;
-		}
-		if (vi->fd > 0) {
-			close(vi->fd);
-			vi->fd = -1;
-		}
-		if (vi->serial) {
-			free(vi->serial);
-			vi->serial = NULL;
-		}
-		if (vi->evdev) {
-			free(vi->evdev);
-			vi->evdev = NULL;
-		}
-		free(vi);
-		vi = NULL;
+	/* all resources will be freed in the teardown callback */
+	mevent_delete(vi->mevp);
+	return -1;
+
+mevent_fail:
+	free(vi->event_queue);
+	vi->event_queue = NULL;
+evqueue_fail:
+	pthread_mutex_destroy(&vi->mtx);
+evdev_fail:
+	close(vi->fd);
+	vi->fd = -1;
+open_fail:
+	if (vi->serial) {
+		free(vi->serial);
+		vi->serial = NULL;
 	}
+serial_fail:
+	free(vi->evdev);
+	vi->evdev = NULL;
+opt_fail:
+	free(vi);
+	vi = NULL;
 	return -1;
 }
 
@@ -704,21 +717,8 @@ virtio_input_deinit(struct vmctx *ctx, struct pci_vdev *dev, char *opts)
 	struct virtio_input *vi;
 
 	vi = (struct virtio_input *)dev->arg;
-	if (vi) {
-		pthread_mutex_destroy(&vi->mtx);
-		if (vi->event_queue)
-			free(vi->event_queue);
-		if (vi->mevp)
-			mevent_delete(vi->mevp);
-		if (vi->fd > 0)
-			close(vi->fd);
-		if (vi->evdev)
-			free(vi->evdev);
-		if (vi->serial)
-			free(vi->serial);
-		free(vi);
-		vi = NULL;
-	}
+	if (vi && vi->mevp)
+		mevent_delete(vi->mevp);
 }
 
 struct pci_vdev_ops pci_ops_virtio_input = {

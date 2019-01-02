@@ -8,31 +8,31 @@
 #include <softirq.h>
 #include <ptdev.h>
 
-#define PTDEV_BITMAP_ARRAY_SIZE	INT_DIV_ROUNDUP(CONFIG_MAX_PT_IRQ_ENTRIES, 64U)
-struct ptdev_remapping_info ptdev_irq_entries[CONFIG_MAX_PT_IRQ_ENTRIES];
-static uint64_t ptdev_entry_bitmaps[PTDEV_BITMAP_ARRAY_SIZE];
+#define PTIRQ_BITMAP_ARRAY_SIZE	INT_DIV_ROUNDUP(CONFIG_MAX_PT_IRQ_ENTRIES, 64U)
+struct ptirq_remapping_info ptirq_entries[CONFIG_MAX_PT_IRQ_ENTRIES];
+static uint64_t ptirq_entry_bitmaps[PTIRQ_BITMAP_ARRAY_SIZE];
 spinlock_t ptdev_lock;
 
-bool is_entry_active(const struct ptdev_remapping_info *entry)
+bool is_entry_active(const struct ptirq_remapping_info *entry)
 {
 	return atomic_load32(&entry->active) == ACTIVE_FLAG;
 }
 
-static inline uint16_t alloc_ptdev_entry_id(void)
+static inline uint16_t ptirq_alloc_entry_id(void)
 {
-	uint16_t id = (uint16_t)ffz64_ex(ptdev_entry_bitmaps, CONFIG_MAX_PT_IRQ_ENTRIES);
+	uint16_t id = (uint16_t)ffz64_ex(ptirq_entry_bitmaps, CONFIG_MAX_PT_IRQ_ENTRIES);
 
 	while (id < CONFIG_MAX_PT_IRQ_ENTRIES) {
-		if (!bitmap_test_and_set_lock((id & 0x3FU), &ptdev_entry_bitmaps[id >> 6U])) {
-			return id;
+		if (!bitmap_test_and_set_lock((id & 0x3FU), &ptirq_entry_bitmaps[id >> 6U])) {
+			break;
 		}
-		id = (uint16_t)ffz64_ex(ptdev_entry_bitmaps, CONFIG_MAX_PT_IRQ_ENTRIES);
+		id = (uint16_t)ffz64_ex(ptirq_entry_bitmaps, CONFIG_MAX_PT_IRQ_ENTRIES);
 	}
 
-	return INVALID_PTDEV_ENTRY_ID;
+	return (id < CONFIG_MAX_PT_IRQ_ENTRIES) ? id: INVALID_PTDEV_ENTRY_ID;
 }
 
-static void ptdev_enqueue_softirq(struct ptdev_remapping_info *entry)
+static void ptirq_enqueue_softirq(struct ptirq_remapping_info *entry)
 {
 	uint64_t rflags;
 
@@ -48,25 +48,24 @@ static void ptdev_enqueue_softirq(struct ptdev_remapping_info *entry)
 	fire_softirq(SOFTIRQ_PTDEV);
 }
 
-static void ptdev_intr_delay_callback(void *data)
+static void ptirq_intr_delay_callback(void *data)
 {
-	struct ptdev_remapping_info *entry =
-		(struct ptdev_remapping_info *) data;
+	struct ptirq_remapping_info *entry =
+		(struct ptirq_remapping_info *) data;
 
-	ptdev_enqueue_softirq(entry);
+	ptirq_enqueue_softirq(entry);
 }
 
-struct ptdev_remapping_info*
-ptdev_dequeue_softirq(struct acrn_vm *vm)
+struct ptirq_remapping_info *ptirq_dequeue_softirq(struct acrn_vm *vm)
 {
 	uint64_t rflags;
-	struct ptdev_remapping_info *entry = NULL;
+	struct ptirq_remapping_info *entry = NULL;
 
 	spinlock_irqsave_obtain(&vm->softirq_dev_lock, &rflags);
 
 	while (!list_empty(&vm->softirq_dev_entry_list)) {
 		entry = get_first_item(&vm->softirq_dev_entry_list,
-			struct ptdev_remapping_info, softirq_node);
+			struct ptirq_remapping_info, softirq_node);
 
 		list_del_init(&entry->softirq_node);
 
@@ -85,69 +84,53 @@ ptdev_dequeue_softirq(struct acrn_vm *vm)
 	return entry;
 }
 
-struct ptdev_remapping_info *
-alloc_entry(struct acrn_vm *vm, uint32_t intr_type)
+struct ptirq_remapping_info *ptirq_alloc_entry(struct acrn_vm *vm, uint32_t intr_type)
 {
-	struct ptdev_remapping_info *entry;
-	uint16_t ptdev_id = alloc_ptdev_entry_id();
+	struct ptirq_remapping_info *entry = NULL;
+	uint16_t ptirq_id = ptirq_alloc_entry_id();
 
-	if (ptdev_id >= CONFIG_MAX_PT_IRQ_ENTRIES) {
+	if (ptirq_id < CONFIG_MAX_PT_IRQ_ENTRIES) {
+		entry = &ptirq_entries[ptirq_id];
+		(void)memset((void *)entry, 0U, sizeof(struct ptirq_remapping_info));
+		entry->ptdev_entry_id = ptirq_id;
+		entry->intr_type = intr_type;
+		entry->vm = vm;
+		entry->intr_count = 0UL;
+
+		INIT_LIST_HEAD(&entry->softirq_node);
+
+		initialize_timer(&entry->intr_delay_timer, ptirq_intr_delay_callback,
+			entry, 0UL, 0, 0UL);
+
+		atomic_clear32(&entry->active, ACTIVE_FLAG);
+	} else {
 		pr_err("Alloc ptdev irq entry failed");
-		return NULL;
 	}
-
-	entry = &ptdev_irq_entries[ptdev_id];
-	(void)memset((void *)entry, 0U, sizeof(struct ptdev_remapping_info));
-	entry->ptdev_entry_id = ptdev_id;
-	entry->intr_type = intr_type;
-	entry->vm = vm;
-	entry->intr_count = 0UL;
-
-	INIT_LIST_HEAD(&entry->softirq_node);
-
-	initialize_timer(&entry->intr_delay_timer, ptdev_intr_delay_callback,
-		entry, 0UL, 0, 0UL);
-
-	atomic_clear32(&entry->active, ACTIVE_FLAG);
 
 	return entry;
 }
 
-void
-release_entry(struct ptdev_remapping_info *entry)
+void ptirq_release_entry(struct ptirq_remapping_info *entry)
 {
 	uint64_t rflags;
 
 	/*
 	 * remove entry from softirq list
-	 * is required before calling release_entry.
+	 * is required before calling ptirq_release_entry.
 	 */
 	spinlock_irqsave_obtain(&entry->vm->softirq_dev_lock, &rflags);
 	list_del_init(&entry->softirq_node);
 	spinlock_irqrestore_release(&entry->vm->softirq_dev_lock, rflags);
 	atomic_clear32(&entry->active, ACTIVE_FLAG);
-	bitmap_clear_nolock((entry->ptdev_entry_id) & 0x3FU, &ptdev_entry_bitmaps[(entry->ptdev_entry_id) >> 6U]);
-}
-
-static void
-release_all_entries(const struct acrn_vm *vm)
-{
-	struct ptdev_remapping_info *entry;
-	uint16_t idx;
-
-	for (idx = 0U; idx < CONFIG_MAX_PT_IRQ_ENTRIES; idx++) {
-		entry = &ptdev_irq_entries[idx];
-		if (entry->vm == vm) {
-			release_entry(entry);
-		}
-	}
+	bitmap_clear_nolock((entry->ptdev_entry_id) & 0x3FU,
+		&ptirq_entry_bitmaps[((entry->ptdev_entry_id) & 0x3FU) >> 6U]);
 }
 
 /* interrupt context */
-static void ptdev_interrupt_handler(__unused uint32_t irq, void *data)
+static void ptirq_interrupt_handler(__unused uint32_t irq, void *data)
 {
-	struct ptdev_remapping_info *entry =
-		(struct ptdev_remapping_info *) data;
+	struct ptirq_remapping_info *entry =
+		(struct ptirq_remapping_info *) data;
 
 	/*
 	 * "interrupt storm" detection & delay intr injection just for UOS
@@ -165,16 +148,16 @@ static void ptdev_interrupt_handler(__unused uint32_t irq, void *data)
 		}
 	}
 
-	ptdev_enqueue_softirq(entry);
+	ptirq_enqueue_softirq(entry);
 }
 
 /* active intr with irq registering */
-int32_t ptdev_activate_entry(struct ptdev_remapping_info *entry, uint32_t phys_irq)
+int32_t ptirq_activate_entry(struct ptirq_remapping_info *entry, uint32_t phys_irq)
 {
 	int32_t retval;
 
 	/* register and allocate host vector/irq */
-	retval = request_irq(phys_irq, ptdev_interrupt_handler, (void *)entry, IRQF_PT);
+	retval = request_irq(phys_irq, ptirq_interrupt_handler, (void *)entry, IRQF_PT);
 
 	if (retval < 0) {
 		pr_err("request irq failed, please check!, phys-irq=%d", phys_irq);
@@ -186,8 +169,7 @@ int32_t ptdev_activate_entry(struct ptdev_remapping_info *entry, uint32_t phys_i
 	return retval;
 }
 
-void
-ptdev_deactivate_entry(struct ptdev_remapping_info *entry)
+void ptirq_deactivate_entry(struct ptirq_remapping_info *entry)
 {
 	uint64_t rflags;
 
@@ -205,31 +187,38 @@ ptdev_deactivate_entry(struct ptdev_remapping_info *entry)
 
 void ptdev_init(void)
 {
-	if (get_cpu_id() != BOOT_CPU_ID) {
-		return;
-	}
+	if (get_cpu_id() == BOOT_CPU_ID) {
 
-	spinlock_init(&ptdev_lock);
-	register_softirq(SOFTIRQ_PTDEV, ptdev_softirq);
+		spinlock_init(&ptdev_lock);
+		register_softirq(SOFTIRQ_PTDEV, ptirq_softirq);
+	}
 }
 
 void ptdev_release_all_entries(const struct acrn_vm *vm)
 {
+	struct ptirq_remapping_info *entry;
+	uint16_t idx;
+
 	/* VM already down */
-	spinlock_obtain(&ptdev_lock);
-	release_all_entries(vm);
-	spinlock_release(&ptdev_lock);
+	for (idx = 0U; idx < CONFIG_MAX_PT_IRQ_ENTRIES; idx++) {
+		entry = &ptirq_entries[idx];
+		if (entry->vm == vm) {
+			spinlock_obtain(&ptdev_lock);
+			ptirq_release_entry(entry);
+			spinlock_release(&ptdev_lock);
+		}
+	}
+
 }
 
-uint32_t get_vm_ptdev_intr_data(const struct acrn_vm *target_vm, uint64_t *buffer,
-	uint32_t buffer_cnt)
+uint32_t ptirq_get_intr_data(const struct acrn_vm *target_vm, uint64_t *buffer, uint32_t buffer_cnt)
 {
 	uint32_t index = 0U;
 	uint16_t i;
-	struct ptdev_remapping_info *entry;
+	struct ptirq_remapping_info *entry;
 
 	for (i = 0U; i < CONFIG_MAX_PT_IRQ_ENTRIES; i++) {
-		entry = &ptdev_irq_entries[i];
+		entry = &ptirq_entries[i];
 		if (!is_entry_active(entry)) {
 			continue;
 		}
@@ -238,7 +227,7 @@ uint32_t get_vm_ptdev_intr_data(const struct acrn_vm *target_vm, uint64_t *buffe
 			buffer[index + 1U] = entry->intr_count;
 
 			index += 2U;
-			if (index >= buffer_cnt) {
+			if (index > (buffer_cnt - 2U)) {
 				break;
 			}
 		}

@@ -42,8 +42,8 @@ typedef struct
 {
     uint32_t total[2];          /*!< The number of Bytes processed.  */
     uint32_t state[8];          /*!< The intermediate digest state.  */
-    unsigned char buffer[64];   /*!< The data block being processed. */
-    int is224;                  /*!< Determines which function to use:
+    uint8_t buffer[64];   /*!< The data block being processed. */
+    int32_t is224;                  /*!< Determines which function to use:
                                      0: Use SHA-256, or 1: Use SHA-224. */
 }
 mbedtls_sha256_context;
@@ -81,7 +81,7 @@ void mbedtls_sha256_clone( mbedtls_sha256_context *dst,
  *
  * \return         \c 0 on success.
  */
-int mbedtls_sha256_starts_ret( mbedtls_sha256_context *ctx, int is224 );
+int32_t mbedtls_sha256_starts_ret( mbedtls_sha256_context *ctx, int32_t is224 );
 
 /**
  * \brief          This function feeds an input buffer into an ongoing
@@ -93,8 +93,8 @@ int mbedtls_sha256_starts_ret( mbedtls_sha256_context *ctx, int is224 );
  *
  * \return         \c 0 on success.
  */
-int mbedtls_sha256_update_ret( mbedtls_sha256_context *ctx,
-                               const unsigned char *input,
+int32_t mbedtls_sha256_update_ret( mbedtls_sha256_context *ctx,
+                               const uint8_t *input,
                                size_t ilen );
 
 /**
@@ -106,8 +106,8 @@ int mbedtls_sha256_update_ret( mbedtls_sha256_context *ctx,
  *
  * \return         \c 0 on success.
  */
-int mbedtls_sha256_finish_ret( mbedtls_sha256_context *ctx,
-                               unsigned char output[32] );
+int32_t mbedtls_sha256_finish_ret( mbedtls_sha256_context *ctx,
+                               uint8_t output[32] );
 
 /**
  * \brief          This function processes a single data block within
@@ -119,8 +119,8 @@ int mbedtls_sha256_finish_ret( mbedtls_sha256_context *ctx,
  *
  * \return         \c 0 on success.
  */
-int mbedtls_internal_sha256_process( mbedtls_sha256_context *ctx,
-                                     const unsigned char data[64] );
+int32_t mbedtls_internal_sha256_process( mbedtls_sha256_context *ctx,
+                                     const uint8_t data[64] );
 
 /**
  * \brief          This function calculates the SHA-224 or SHA-256
@@ -138,9 +138,9 @@ int mbedtls_internal_sha256_process( mbedtls_sha256_context *ctx,
  * \param is224    Determines which function to use:
  *                 0: Use SHA-256, or 1: Use SHA-224.
  */
-int mbedtls_sha256_ret( const unsigned char *input,
+int32_t mbedtls_sha256_ret( const uint8_t *input,
                         size_t ilen,
-                        unsigned char output[32],
-                        int is224 );
+                        uint8_t output[32],
+                        int32_t is224 );
 
 #endif /* mbedtls_sha256.h */

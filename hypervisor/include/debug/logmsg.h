@@ -6,6 +6,7 @@
 
 #ifndef LOGMSG_H
 #define LOGMSG_H
+#include <cpu.h>
 
 /* Logging severity levels */
 #define LOG_FATAL		1U
@@ -31,9 +32,6 @@
 extern uint16_t console_loglevel;
 extern uint16_t mem_loglevel;
 extern uint16_t npk_loglevel;
-void init_logmsg(uint32_t flags);
-void print_logmsg_buffer(uint16_t pcpu_id);
-void do_logmsg(uint32_t severity, const char *fmt, ...);
 
 void asm_assert(int32_t line, const char *file, const char *txt);
 
@@ -43,6 +41,15 @@ void asm_assert(int32_t line, const char *file, const char *txt);
 			asm_assert(__LINE__, __FILE__, "fatal error");\
 		} \
 	} while (0)
+
+#else /* HV_DEBUG */
+
+#define ASSERT(x, ...)	do { } while (0)
+
+#endif /* HV_DEBUG */
+
+void init_logmsg(uint32_t flags);
+void do_logmsg(uint32_t severity, const char *fmt, ...);
 
 /** The well known printf() function.
  *
@@ -67,35 +74,6 @@ void printf(const char *fmt, ...);
  */
 
 void vprintf(const char *fmt, va_list args);
-
-#else /* HV_DEBUG */
-
-static inline void init_logmsg(__unused uint32_t flags)
-{
-}
-
-static inline void do_logmsg(__unused uint32_t severity,
-			__unused const char *fmt, ...)
-{
-}
-
-static inline void print_logmsg_buffer(__unused uint16_t pcpu_id)
-{
-}
-
-#define ASSERT(x, ...)	do { } while (0)
-
-static inline void printf(__unused const char *fmt, ...)
-{
-
-}
-
-static inline void vprintf(__unused const char *fmt, __unused va_list args)
-{
-
-}
-
-#endif /* HV_DEBUG */
 
 #ifndef pr_prefix
 #define pr_prefix
@@ -139,6 +117,6 @@ static inline void vprintf(__unused const char *fmt, __unused va_list args)
 #define panic(...) 							\
 	do { pr_fatal("PANIC: %s line: %d\n", __func__, __LINE__);	\
 		pr_fatal(__VA_ARGS__); 					\
-		while (1) { asm volatile ("pause" ::: "memory"); }; } while (0)
+		while (1) { asm_pause(); }; } while (0)
 
 #endif /* LOGMSG_H */

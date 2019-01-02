@@ -51,8 +51,7 @@ CFLAGS += -fsigned-char
 CFLAGS += -m64 -mno-mmx -mno-sse -mno-sse2 -mno-80387 -mno-fp-ret-in-387
 CFLAGS += -mno-red-zone
 CFLAGS += -nostdinc -nostdlib -fno-common
-CFLAGS += -O2 -D_FORTIFY_SOURCE=2
-CFLAGS += -Wformat -Wformat-security -Werror
+CFLAGS += -Werror
 ifeq (y, $(CONFIG_RELOC))
 CFLAGS += -fpie
 else
@@ -77,7 +76,6 @@ ASFLAGS += -m64 -nostdinc -nostdlib
 
 LDFLAGS += -Wl,--gc-sections -nostartfiles -nostdlib
 LDFLAGS += -Wl,-n,-z,max-page-size=0x1000
-LDFLAGS += -Wl,-z,noexecstack
 
 ifeq (y, $(CONFIG_RELOC))
 # on X86_64, when build with "-pie", GCC fails on linking R_X86_64_32
@@ -103,6 +101,7 @@ INCLUDE_PATH += include/lib
 INCLUDE_PATH += include/lib/crypto
 INCLUDE_PATH += include/common
 INCLUDE_PATH += include/arch/x86
+INCLUDE_PATH += include/arch/x86/boot
 INCLUDE_PATH += include/arch/x86/guest
 INCLUDE_PATH += include/debug
 INCLUDE_PATH += include/public
@@ -122,23 +121,30 @@ export CFLAGS ASFLAGS ARFLAGS LDFLAGS ARCH_CFLAGS ARCH_ASFLAGS ARCH_ARFLAGS ARCH
 export HV_OBJDIR CONFIG_RELEASE INCLUDE_PATH
 export LIB_DEBUG LIB_RELEASE
 
+# boot component
+S_SRCS += arch/x86/boot/cpu_primary.S
+S_SRCS += arch/x86/boot/cpu_save_boot_ctx.S
+S_SRCS += arch/x86/boot/trampoline.S
+C_SRCS += boot/reloc.c
+
+# initilization component
+C_SRCS += arch/x86/init.c
+
 C_SRCS += boot/acpi.c
 C_SRCS += boot/dmar_parse.c
-C_SRCS += boot/reloc.c
+S_SRCS += arch/x86/idt.S
 C_SRCS += arch/x86/ioapic.c
 C_SRCS += arch/x86/lapic.c
-S_SRCS += arch/x86/trampoline.S
 C_SRCS += arch/x86/cpu.c
-C_SRCS += arch/x86/cpuid.c
+C_SRCS += arch/x86/cpu_caps.c
+C_SRCS += arch/x86/security.c
 C_SRCS += arch/x86/mmu.c
+C_SRCS += arch/x86/e820.c
 C_SRCS += arch/x86/pagetable.c
 C_SRCS += arch/x86/page.c
 C_SRCS += arch/x86/notify.c
 C_SRCS += arch/x86/vtd.c
 C_SRCS += arch/x86/gdt.c
-S_SRCS += arch/x86/cpu_primary.S
-S_SRCS += arch/x86/cpu_save_boot_ctx.S
-S_SRCS += arch/x86/idt.S
 C_SRCS += arch/x86/irq.c
 C_SRCS += arch/x86/timer.c
 C_SRCS += arch/x86/ept.c
@@ -147,16 +153,19 @@ C_SRCS += arch/x86/io.c
 C_SRCS += arch/x86/virq.c
 C_SRCS += arch/x86/vmexit.c
 C_SRCS += arch/x86/vmx.c
+C_SRCS += arch/x86/vmcs.c
 C_SRCS += arch/x86/assign.c
 C_SRCS += arch/x86/trusty.c
 C_SRCS += arch/x86/cpu_state_tbl.c
-C_SRCS += arch/x86/mtrr.c
 C_SRCS += arch/x86/pm.c
 S_SRCS += arch/x86/wakeup.S
 C_SRCS += arch/x86/static_checks.c
+C_SRCS += arch/x86/trampoline.c
+C_SRCS += arch/x86/guest/vcpuid.c
 C_SRCS += arch/x86/guest/vcpu.c
 C_SRCS += arch/x86/guest/vm.c
 C_SRCS += arch/x86/guest/vlapic.c
+C_SRCS += arch/x86/guest/vmtrr.c
 C_SRCS += arch/x86/guest/guest.c
 C_SRCS += arch/x86/guest/vmcall.c
 C_SRCS += arch/x86/guest/vmsr.c
@@ -204,15 +213,17 @@ C_SRCS += dm/vpci/msi.c
 C_SRCS += dm/vpci/msix.c
 endif
 
-C_SRCS += bsp/$(CONFIG_PLATFORM)/$(CONFIG_PLATFORM).c
-
-ifeq ($(CONFIG_PLATFORM),uefi)
-C_SRCS += bsp/$(CONFIG_PLATFORM)/cmdline.c
+ifeq ($(CONFIG_PLATFORM_UEFI),y)
+C_SRCS += bsp/uefi/uefi.c
+C_SRCS += bsp/uefi/cmdline.c
+TEMPLATE_ACPI_INFO_HEADER := bsp/include/uefi/platform_acpi_info.h
 else
-ifeq ($(CONFIG_PLATFORM), sbl)
+ifeq ($(CONFIG_PLATFORM_SBL),y)
+C_SRCS += bsp/sbl/sbl.c
 C_SRCS += boot/sbl/multiboot.c
 C_SRCS += boot/sbl/sbl_seed_parse.c
 C_SRCS += boot/sbl/abl_seed_parse.c
+TEMPLATE_ACPI_INFO_HEADER := bsp/include/sbl/platform_acpi_info.h
 endif
 endif
 
@@ -231,7 +242,7 @@ endif
 
 C_OBJS := $(patsubst %.c,$(HV_OBJDIR)/%.o,$(C_SRCS))
 ifneq ($(CONFIG_RELEASE),y)
-CFLAGS += -DHV_DEBUG -DPROFILING_ON
+CFLAGS += -DHV_DEBUG -DPROFILING_ON -fno-omit-frame-pointer
 endif
 S_OBJS := $(patsubst %.S,$(HV_OBJDIR)/%.o,$(S_SRCS))
 
@@ -240,7 +251,6 @@ VERSION := $(HV_OBJDIR)/include/version.h
 
 # Create platform_acpi_info.h
 SOURCE_ACPI_INFO_HEADER := bsp/include/$(CONFIG_BOARD)_acpi_info.h
-TEMPLATE_ACPI_INFO_HEADER := bsp/include/$(CONFIG_PLATFORM)/platform_acpi_info.h
 TARGET_ACPI_INFO_HEADER := $(HV_OBJDIR)/include/platform_acpi_info.h
 
 $(TARGET_ACPI_INFO_HEADER): $(HV_OBJDIR)/$(HV_CONFIG)
@@ -269,20 +279,13 @@ endif
 .PHONY: all
 all: lib $(HV_OBJDIR)/$(HV_FILE).32.out $(HV_OBJDIR)/$(HV_FILE).bin
 
-ifeq ($(CONFIG_PLATFORM), uefi)
-all: efi
-.PHONY: efi
-efi: $(HV_OBJDIR)/$(HV_FILE).bin
-	echo "building hypervisor as EFI executable..."
-	make -C bsp/uefi/efi HV_OBJDIR=$(HV_OBJDIR)
-
-install: efi
-	make -C bsp/uefi/efi HV_OBJDIR=$(HV_OBJDIR) install
-endif
-
-ifeq ($(CONFIG_PLATFORM), sbl)
-install: $(HV_OBJDIR)/$(HV_FILE).32.out
+ifeq ($(CONFIG_PLATFORM_SBL),y)
+install: lib $(HV_OBJDIR)/$(HV_FILE).32.out
 	install -D $(HV_OBJDIR)/$(HV_FILE).32.out $(DESTDIR)/usr/lib/acrn/$(HV_FILE).sbl
+
+install-debug: $(HV_OBJDIR)/$(HV_FILE).map $(HV_OBJDIR)/$(HV_FILE).out
+	install -D $(HV_OBJDIR)/$(HV_FILE).out $(DESTDIR)/usr/lib/acrn/$(HV_FILE).sbl.out
+	install -D $(HV_OBJDIR)/$(HV_FILE).map $(DESTDIR)/usr/lib/acrn/$(HV_FILE).sbl.map
 endif
 
 .PHONY: header
@@ -343,9 +346,8 @@ $(VERSION):
 	sed 's/^/ * /' ../LICENSE >> $(VERSION); \
 	echo " */" >> $(VERSION); \
 	echo "" >> $(VERSION); \
-	echo "#define HV_MAJOR_VERSION $(MAJOR_VERSION)" >> $(VERSION);\
-	echo "#define HV_MINOR_VERSION $(MINOR_VERSION)" >> $(VERSION);\
-	echo "#define HV_EXTRA_VERSION "\"$(EXTRA_VERSION)\""" >> $(VERSION);\
+	echo "#ifndef VERSION_H" >> $(VERSION); \
+	echo "#define VERSION_H" >> $(VERSION); \
 	echo "#define HV_FULL_VERSION "\"$(FULL_VERSION)\""" >> $(VERSION);\
 	echo "#define HV_API_MAJOR_VERSION $(API_MAJOR_VERSION)U" >> $(VERSION);\
 	echo "#define HV_API_MINOR_VERSION $(API_MINOR_VERSION)U" >> $(VERSION);\
@@ -353,7 +355,8 @@ $(VERSION):
 	echo "#define HV_BUILD_VERSION "\""$$PATCH"\""" >> $(VERSION);\
 	echo "#define HV_BUILD_TYPE "\""$$BUILD_TYPE"\""" >> $(VERSION);\
 	echo "#define HV_BUILD_TIME "\""$$TIME"\""" >> $(VERSION);\
-	echo "#define HV_BUILD_USER "\""$$USER"\""" >> $(VERSION)
+	echo "#define HV_BUILD_USER "\""$$USER"\""" >> $(VERSION);\
+	echo "#endif" >> $(VERSION)
 
 -include $(C_OBJS:.o=.d)
 -include $(S_OBJS:.o=.d)

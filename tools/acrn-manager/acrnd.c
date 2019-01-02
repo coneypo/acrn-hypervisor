@@ -135,7 +135,7 @@ void acrnd_vm_timer_func(struct work_arg *arg)
 	case VM_CREATED:
 		acrnd_run_vm(arg->name);
 		break;
-	case VM_PAUSED:
+	case VM_SUSPENDED:
 		resume_vm(arg->name, CBC_WK_RSN_RTC);
 		break;
 	default:
@@ -143,7 +143,6 @@ void acrnd_vm_timer_func(struct work_arg *arg)
 	}
 }
 
-#define TIMER_LIST_FILE "/opt/acrn/conf/timer_list"
 static pthread_mutex_t timer_file_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 /* load/store_timer_list to file to keep timers if SOS poweroff */
@@ -157,7 +156,7 @@ static int load_timer_list(void)
 
 	pthread_mutex_lock(&timer_file_mutex);
 
-	fp = fopen(TIMER_LIST_FILE, "r");
+	fp = fopen(ACRN_CONF_TIMER_LIST, "r");
 	if (!fp) {
 		perror("Open timer list file");
 		ret = -1;
@@ -251,7 +250,7 @@ static int active_all_vms(void)
 			if (!pid)
 				acrnd_run_vm(vm->name);
 			break;
-		case VM_PAUSED:
+		case VM_SUSPENDED:
 			reason = get_sos_wakeup_reason();
 			ret += resume_vm(vm->name, reason);
 			break;
@@ -288,7 +287,7 @@ static int wakeup_suspended_vms(unsigned wakeup_reason)
 	vmmngr_update();
 
 	LIST_FOREACH(vm, &vmmngr_head, list) {
-		if (vm->state == VM_PAUSED)
+		if (vm->state == VM_SUSPENDED)
 			ret += resume_vm(vm->name, wakeup_reason);
 	}
 
@@ -402,7 +401,7 @@ static int store_timer_list(void)
 	int ret = 0;
 
 	pthread_mutex_lock(&timer_file_mutex);
-	fp = fopen(TIMER_LIST_FILE, "w+");
+	fp = fopen(ACRN_CONF_TIMER_LIST, "w+");
 	if (!fp) {
 		perror("Open timer list file");
 		ret = -1;
@@ -429,7 +428,7 @@ static int store_timer_list(void)
 	if (sys_wakeup) {
 		set_sos_timer(sys_wakeup);
 	} else {
-		unlink(TIMER_LIST_FILE);
+		unlink(ACRN_CONF_TIMER_LIST);
 	}
 
 	fclose(fp);
@@ -466,7 +465,7 @@ static int wait_for_stop(unsigned int timeout)
 			return SHUTDOWN;
 		}
 
-		if (check_vms_status(VM_PAUSED) == 0) {
+		if (check_vms_status(VM_SUSPENDED) == 0) {
 			printf("All vms have entered S3 state successfully\n");
 			return SUSPEND;
 		}
@@ -584,7 +583,7 @@ void handle_acrnd_resume(struct mngr_msg *msg, int client_fd, void *param)
 
 	if (wakeup_reason & CBC_WK_RSN_RTC) {
 		/* wakeup by RTC timer */
-		if (!stat(TIMER_LIST_FILE, &st)
+		if (!stat(ACRN_CONF_TIMER_LIST, &st)
 			&& S_ISREG(st.st_mode)) {
 			ack.data.err = load_timer_list();
 			if (ack.data.err == 0) {
@@ -602,7 +601,7 @@ void handle_acrnd_resume(struct mngr_msg *msg, int client_fd, void *param)
 	}
 
 reply_ack:
-	unlink(TIMER_LIST_FILE);
+	unlink(ACRN_CONF_TIMER_LIST);
 
 	if (client_fd > 0)
 		mngr_send_msg(client_fd, &ack, NULL, 0);
@@ -677,7 +676,7 @@ int main(int argc, char *argv[])
 		return -1;
 	}
 
-	unlink(TIMER_LIST_FILE);
+	unlink(ACRN_CONF_TIMER_LIST);
 
 	atexit(handle_on_exit);
 

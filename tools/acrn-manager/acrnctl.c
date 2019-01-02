@@ -23,8 +23,6 @@
 #include "acrnctl.h"
 #include "ioc.h"
 
-#define ACRNCTL_OPT_ROOT	"/opt/acrn/conf"
-
 #define ACMD(CMD,FUNC,DESC, VALID_ARGS) \
 {.cmd = CMD, .func = FUNC, .desc = DESC, .valid_args = VALID_ARGS}
 
@@ -40,7 +38,7 @@
 #define RESUME_DESC    "Resume virtual machine from suspend state"
 #define RESET_DESC     "Stop and then start virtual machine VM_NAME"
 
-#define STOP_TIMEOUT	10U
+#define STOP_TIMEOUT	30U
 
 struct acrnctl_cmd {
 	const char *cmd;
@@ -280,7 +278,7 @@ static int acrnctl_do_add(int argc, char *argv[])
 	}
 	system(cmd);
 
-	if (snprintf(cmd, sizeof(cmd), "bash %s%s >./%s.result", argv[1],
+	if (snprintf(cmd, sizeof(cmd), "bash %s%s > %s.result", argv[1],
 			args, argv[1]) >= sizeof(cmd)) {
 		printf("ERROR: cmd is truncated\n");
 		ret = -1 ;
@@ -290,7 +288,7 @@ static int acrnctl_do_add(int argc, char *argv[])
 	if (ret < 0)
 		goto get_vmname;
 
-	if (snprintf(cmd, sizeof(cmd), "grep -a \"acrnctl: \" ./%s.result",
+	if (snprintf(cmd, sizeof(cmd), "grep -a \"acrnctl: \" %s.result",
 			argv[1]) >= sizeof(cmd)) {
 		printf("ERROR: cmd is truncated\n");
 		ret = -1;
@@ -308,7 +306,7 @@ static int acrnctl_do_add(int argc, char *argv[])
 	ret = _get_vmname(cmd_out, vmname, sizeof(vmname));
 	if (ret < 0) {
 		/* failed to get vmname */
-		if (snprintf(cmd, sizeof(cmd), "cat ./%s.result", argv[1]) >= sizeof(cmd)) {
+		if (snprintf(cmd, sizeof(cmd), "cat %s.result", argv[1]) >= sizeof(cmd)) {
 			printf("ERROR: cmd is truncated\n");
 			goto get_vmname;
 		}
@@ -330,7 +328,7 @@ static int acrnctl_do_add(int argc, char *argv[])
 		goto get_vmname;
 	}
 
-	if (snprintf(cmd, sizeof(cmd), "mkdir -p %s/add", ACRNCTL_OPT_ROOT)
+	if (snprintf(cmd, sizeof(cmd), "mkdir -p %s", ACRN_CONF_PATH_ADD)
 			>= sizeof(cmd)) {
 		printf("ERROR: cmd is truncated\n");
 		ret = -1;
@@ -346,16 +344,16 @@ static int acrnctl_do_add(int argc, char *argv[])
 		goto vm_exist;
 	}
 
-	if (snprintf(cmd, sizeof(cmd), "cp %s.back %s/add/%s.sh", argv[1],
-		 ACRNCTL_OPT_ROOT, vmname) >= sizeof(cmd)) {
+	if (snprintf(cmd, sizeof(cmd), "cp %s.back %s/%s.sh", argv[1],
+		 ACRN_CONF_PATH_ADD, vmname) >= sizeof(cmd)) {
 		printf("ERROR: cmd is truncated\n");
 		ret = -1;
 		goto vm_exist;
 	}
 	system(cmd);
 
-	if (snprintf(cmd, sizeof(cmd), "echo %s >%s/add/%s.args", args,
-		 ACRNCTL_OPT_ROOT, vmname) >= sizeof(cmd)) {
+	if (snprintf(cmd, sizeof(cmd), "echo %s >%s/%s.args", args,
+		 ACRN_CONF_PATH_ADD, vmname) >= sizeof(cmd)) {
 		printf("ERROR: cmd is truncated\n");
 		ret = -1;
 		goto vm_exist;
@@ -365,7 +363,7 @@ static int acrnctl_do_add(int argc, char *argv[])
 
  vm_exist:
  get_vmname:
-	if (snprintf(cmd, sizeof(cmd), "rm -f ./%s.result", argv[1]) >= sizeof(cmd)) {
+	if (snprintf(cmd, sizeof(cmd), "rm -f %s.result", argv[1]) >= sizeof(cmd)) {
 		printf("WARN: cmd is truncated\n");
 	} else
 		system(cmd);
@@ -438,14 +436,14 @@ static int acrnctl_do_del(int argc, char *argv[])
 			       state_str[s->state]);
 			continue;
 		}
-		if (snprintf(cmd, sizeof(cmd), "rm -f %s/add/%s.sh",
-			 ACRNCTL_OPT_ROOT, argv[i]) >= sizeof(cmd)) {
+		if (snprintf(cmd, sizeof(cmd), "rm -f %s/%s.sh",
+			 ACRN_CONF_PATH_ADD, argv[i]) >= sizeof(cmd)) {
 			printf("WARN: cmd is truncated\n");
 			return -1;
 		}
 		system(cmd);
-		if (snprintf(cmd, sizeof(cmd), "rm -f %s/add/%s.args",
-			 ACRNCTL_OPT_ROOT, argv[i]) >= sizeof(cmd)) {
+		if (snprintf(cmd, sizeof(cmd), "rm -f %s/%s.args",
+			 ACRN_CONF_PATH_ADD, argv[i]) >= sizeof(cmd)) {
 			printf("WARN: cmd is truncated\n");
 			return -1;
 		}
@@ -574,7 +572,7 @@ static int acrnctl_do_resume(int argc, char *argv[])
 		printf("No wake up reason, use 0x%x\n", reason);
 
 	switch (s->state) {
-		case VM_PAUSED:
+		case VM_SUSPENDED:
 			resume_vm(argv[1], reason);
 			printf("resume %s reason(0x%x\n", argv[1], reason);
 			break;
@@ -600,8 +598,10 @@ static int wait_vm_stop(const char * vmname, unsigned int timeout)
 			printf("%s: vm %s not found\n", __func__, vmname);
 			return -1;
 		} else {
-			if (s->state == VM_CREATED)
+			if (s->state == VM_CREATED) {
+				sleep(2);
 				return 0;
+			}
 		}
 
 		sleep(1);
@@ -623,16 +623,13 @@ static int acrnctl_do_reset(int argc, char *argv[])
 		}
 
 		switch(s->state) {
-			case VM_CREATED:
-				start_vm(argv[i]);
-				break;
 			case VM_STARTED:
-			case VM_PAUSED:
+			case VM_SUSPENDED:
 				stop_vm(argv[i]);
 				if (wait_vm_stop(argv[i], STOP_TIMEOUT)) {
-					printf("Failed to stop %s in %u sec\n",
+					printf("Failed to stop %s in %u sec, reset failed\n",
 						argv[i], STOP_TIMEOUT);
-					break;
+					return -1;
 				}
 				start_vm(argv[i]);
 				break;

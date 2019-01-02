@@ -99,7 +99,7 @@ const struct e820_entry e820_default_entries[NUM_E820_ENTRIES] = {
 int
 acrn_parse_bootargs(char *arg)
 {
-	size_t len = strlen(arg);
+	size_t len = strnlen(arg, STR_LEN);
 
 	if (len < STR_LEN) {
 		strncpy(bootargs, arg, len + 1);
@@ -117,15 +117,32 @@ get_bootargs(void)
 }
 
 int
-check_image(char *path)
+check_image(char *path, size_t size_limit, size_t *size)
 {
 	FILE *fp;
+	long len;
 
 	fp = fopen(path, "r");
-	if (fp == NULL)
+
+	if (fp == NULL) {
+		fprintf(stderr,
+			"SW_LOAD ERR: image file failed to open\n");
 		return -1;
+	}
+
+	fseek(fp, 0, SEEK_END);
+	len = ftell(fp);
+
+	if (len == 0 || (size_limit && len > size_limit)) {
+		fprintf(stderr,
+			"SW_LOAD ERR: file is %s\n",
+			len ? "too large" : "empty");
+		fclose(fp);
+		return -1;
+	}
 
 	fclose(fp);
+	*size = len;
 	return 0;
 }
 
@@ -222,6 +239,8 @@ acrn_sw_load(struct vmctx *ctx)
 {
 	if (vsbl_file_name)
 		return acrn_sw_load_vsbl(ctx);
+	else if (ovmf_file_name)
+		return acrn_sw_load_ovmf(ctx);
 	else if (kernel_file_name)
 		return acrn_sw_load_bzimage(ctx);
 	else if (elf_file_name)

@@ -35,6 +35,7 @@
 #include <assert.h>
 #include <stdbool.h>
 
+#include "dm.h"
 #include "vmmapi.h"
 #include "acpi.h"
 #include "inout.h"
@@ -153,6 +154,39 @@ pci_parse_slot_usage(char *aopt)
 }
 
 int
+parse_bdf(char *s, int *bus, int *dev, int *func, int base)
+{
+	char *s_bus, *s_dev, *s_func;
+	char *str, *cp;
+	int ret = 0;
+
+	str = cp = strdup(s);
+	bus ? *bus = 0 : 0;
+	dev ? *dev = 0 : 0;
+	func ? *func = 0 : 0;
+	s_bus = s_dev = s_func = NULL;
+	s_dev = strsep(&cp, ":/.");
+	if (cp) {
+		s_func = strsep(&cp, ":/.");
+		if (cp) {
+			s_bus = s_dev;
+			s_dev = s_func;
+			s_func = strsep(&cp, ":/.");
+		}
+	}
+
+	if (s_dev && dev)
+		ret |= dm_strtoi(s_dev, &s_dev, base, dev);
+	if (s_func && func)
+		ret |= dm_strtoi(s_func, &s_func, base, func);
+	if (s_bus && bus)
+		ret |= dm_strtoi(s_bus, &s_bus, base, bus);
+	free(str);
+
+	return ret;
+}
+
+int
 pci_parse_slot(char *opt)
 {
 	struct businfo *bi;
@@ -168,41 +202,22 @@ pci_parse_slot(char *opt)
 	}
 
 	emul = config = NULL;
-	cp = strchr(str, ',');
-	if (cp != NULL) {
-		*cp = '\0';
-		emul = cp + 1;
-		cp = strchr(emul, ',');
-		if (cp != NULL) {
-			*cp = '\0';
-			config = cp + 1;
-			if (*config == 'b') {
-				b = config;
-				cp = config + 1;
-				if (*cp == ',') {
-					*cp = '\0';
-					config = cp + 1;
-				} else {
-					b = NULL;
-				}
-			}
-		}
+	cp = str;
+	str = strsep(&cp, ",");
+	if (cp) {
+		emul = strsep(&cp, ",");
+		/* for boot device */
+		if (cp && *cp == 'b' && *(cp+1) == ',')
+			b = strsep(&cp, ",");
+		config = cp;
 	} else {
 		pci_parse_slot_usage(opt);
 		goto done;
 	}
 
 	/* <bus>:<slot>:<func> */
-	if (sscanf(str, "%d:%d:%d", &bnum, &snum, &fnum) != 3) {
-		bnum = 0;
-		/* <slot>:<func> */
-		if (sscanf(str, "%d:%d", &snum, &fnum) != 2) {
-			fnum = 0;
-			/* <slot> */
-			if (sscanf(str, "%d", &snum) != 1)
-				snum = -1;
-		}
-	}
+	if (parse_bdf(str, &bnum, &snum, &fnum, 10) != 0)
+		snum = -1;
 
 	if (bnum < 0 || bnum >= MAXBUSES || snum < 0 || snum >= MAXSLOTS ||
 	    fnum < 0 || fnum >= MAXFUNCS) {
@@ -355,6 +370,17 @@ pci_msix_pba_bar(struct pci_vdev *dev)
 		return -1;
 }
 
+static inline uint64_t
+bar_value(int size, uint64_t val)
+{
+	uint64_t mask;
+
+	assert(size == 1 || size == 2 || size == 4 || size == 8);
+	mask = (size < 8 ? 1UL << (size * 8) : 0UL) - 1;
+
+	return val & mask;
+}
+
 static int
 pci_emul_io_handler(struct vmctx *ctx, int vcpu, int in, int port, int bytes,
 		    uint32_t *eax, void *arg)
@@ -369,12 +395,13 @@ pci_emul_io_handler(struct vmctx *ctx, int vcpu, int in, int port, int bytes,
 		    port >= pdi->bar[i].addr &&
 		    port + bytes <= pdi->bar[i].addr + pdi->bar[i].size) {
 			offset = port - pdi->bar[i].addr;
-			if (in)
+			if (in) {
 				*eax = (*ops->vdev_barread)(ctx, vcpu, pdi, i,
-							 offset, bytes);
-			else
+				                            offset, bytes);
+				*eax = bar_value(bytes, *eax);
+			} else
 				(*ops->vdev_barwrite)(ctx, vcpu, pdi, i, offset,
-						   bytes, *eax);
+				                      bytes, bar_value(bytes, *eax));
 			return 0;
 		}
 	}
@@ -406,17 +433,24 @@ pci_emul_mem_handler(struct vmctx *ctx, int vcpu, int dir, uint64_t addr,
 					   4, *val >> 32);
 		} else {
 			(*ops->vdev_barwrite)(ctx, vcpu, pdi, bidx, offset,
-					   size, *val);
+					   size, bar_value(size, *val));
 		}
 	} else {
 		if (size == 8) {
-			*val = (*ops->vdev_barread)(ctx, vcpu, pdi, bidx,
-						 offset, 4);
-			*val |= (*ops->vdev_barread)(ctx, vcpu, pdi, bidx,
-						  offset + 4, 4) << 32;
+			uint64_t val_lo, val_hi;
+
+			val_lo = (*ops->vdev_barread)(ctx, vcpu, pdi, bidx,
+			                              offset, 4);
+			val_lo = bar_value(4, val_lo);
+
+			val_hi = (*ops->vdev_barread)(ctx, vcpu, pdi, bidx,
+			                              offset + 4, 4);
+
+			*val = val_lo | (val_hi << 32);
 		} else {
 			*val = (*ops->vdev_barread)(ctx, vcpu, pdi, bidx,
-						 offset, size);
+			                            offset, size);
+			*val = bar_value(size, *val);
 		}
 	}
 
@@ -1644,7 +1678,7 @@ pci_msix_enabled(struct pci_vdev *dev)
  * @param dev Pointer to struct pci_vdev representing virtual PCI device.
  * @param index MSIx table entry index.
  *
- * @return N/A
+ * @return None
  */
 void
 pci_generate_msix(struct pci_vdev *dev, int index)
@@ -1673,7 +1707,7 @@ pci_generate_msix(struct pci_vdev *dev, int index)
  * @param dev Pointer to struct pci_vdev representing virtual PCI device.
  * @param index Message data index.
  *
- * @return N/A
+ * @return None
  */
 void
 pci_generate_msi(struct pci_vdev *dev, int index)
@@ -1781,7 +1815,7 @@ pci_lintr_route(struct pci_vdev *dev)
  *
  * @param dev Pointer to struct pci_vdev representing virtual PCI device.
  *
- * @return N/A
+ * @return None
  */
 void
 pci_lintr_assert(struct pci_vdev *dev)
@@ -1804,7 +1838,7 @@ pci_lintr_assert(struct pci_vdev *dev)
  *
  * @param dev Pointer to struct pci_vdev representing virtual PCI device.
  *
- * @return N/A
+ * @return None
  */
 void
 pci_lintr_deassert(struct pci_vdev *dev)

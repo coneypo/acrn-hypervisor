@@ -35,17 +35,21 @@ static void vpic_set_pinstate(struct acrn_vpic *vpic, uint8_t pin, uint8_t level
 
 static inline bool master_pic(const struct acrn_vpic *vpic, struct i8259_reg_state *i8259)
 {
+	bool ret;
 
 	if (i8259 == &vpic->i8259[0]) {
-		return true;
+		ret = true;
 	} else {
-		return false;
+	        ret = false;
 	}
+
+	return ret;
 }
 
 static inline uint8_t vpic_get_highest_isrpin(const struct i8259_reg_state *i8259)
 {
 	uint8_t bit, pin, i;
+	uint8_t found_pin = VPIC_INVALID_PIN;
 
 	pin = (i8259->lowprio + 1U) & 0x7U;
 
@@ -61,18 +65,20 @@ static inline uint8_t vpic_get_highest_isrpin(const struct i8259_reg_state *i825
 				pin = (pin + 1U) & 0x7U;
 				continue;
 			} else {
-				return pin;
+				found_pin = pin;
+				break;
 			}
 		}
 		pin = (pin + 1U) & 0x7U;
 	}
 
-	return VPIC_INVALID_PIN;
+	return found_pin;
 }
 
 static inline uint8_t vpic_get_highest_irrpin(const struct i8259_reg_state *i8259)
 {
 	uint8_t serviced, bit, pin, tmp;
+	uint8_t found_pin = VPIC_INVALID_PIN;
 
 	/*
 	 * In 'Special Fully-Nested Mode' when an interrupt request from
@@ -112,13 +118,14 @@ static inline uint8_t vpic_get_highest_irrpin(const struct i8259_reg_state *i825
 		 * the corresponding 'pin' to the caller.
 		 */
 		if (((i8259->request & bit) != 0) && ((i8259->mask & bit) == 0)) {
-			return pin;
+			found_pin = pin;
+			break;
 		}
 
 		pin = (pin + 1U) & 0x7U;
 	}
 
-	return VPIC_INVALID_PIN;
+	return found_pin;
 }
 
 static void vpic_notify_intr(struct acrn_vpic *vpic)
@@ -207,8 +214,10 @@ static void vpic_notify_intr(struct acrn_vpic *vpic)
 	}
 }
 
-static int vpic_icw1(const struct acrn_vpic *vpic, struct i8259_reg_state *i8259, uint8_t val)
+static int32_t vpic_icw1(const struct acrn_vpic *vpic, struct i8259_reg_state *i8259, uint8_t val)
 {
+	int32_t ret;
+
 	dev_dbg(ACRN_DBG_PIC, "vm 0x%x: i8259 icw1 0x%x\n",
 		vpic->vm, val);
 
@@ -224,20 +233,19 @@ static int vpic_icw1(const struct acrn_vpic *vpic, struct i8259_reg_state *i8259
 
 	if ((val & ICW1_SNGL) != 0) {
 		dev_dbg(ACRN_DBG_PIC, "vpic cascade mode required\n");
-		return -1;
-	}
-
-	if ((val & ICW1_IC4) == 0U) {
+		ret = -1;
+	} else if ((val & ICW1_IC4) == 0U) {
 		dev_dbg(ACRN_DBG_PIC, "vpic icw4 required\n");
-		return -1;
+		ret = -1;
+	} else {
+		i8259->icw_num++;
+		ret = 0;
 	}
 
-	i8259->icw_num++;
-
-	return 0;
+	return ret;
 }
 
-static int vpic_icw2(const struct acrn_vpic *vpic, struct i8259_reg_state *i8259, uint8_t val)
+static int32_t vpic_icw2(const struct acrn_vpic *vpic, struct i8259_reg_state *i8259, uint8_t val)
 {
 	dev_dbg(ACRN_DBG_PIC, "vm 0x%x: i8259 icw2 0x%x\n",
 		vpic->vm, val);
@@ -249,7 +257,7 @@ static int vpic_icw2(const struct acrn_vpic *vpic, struct i8259_reg_state *i8259
 	return 0;
 }
 
-static int vpic_icw3(const struct acrn_vpic *vpic, struct i8259_reg_state *i8259, uint8_t val)
+static int32_t vpic_icw3(const struct acrn_vpic *vpic, struct i8259_reg_state *i8259, uint8_t val)
 {
 	dev_dbg(ACRN_DBG_PIC, "vm 0x%x: i8259 icw3 0x%x\n",
 		vpic->vm, val);
@@ -259,38 +267,41 @@ static int vpic_icw3(const struct acrn_vpic *vpic, struct i8259_reg_state *i8259
 	return 0;
 }
 
-static int vpic_icw4(const struct acrn_vpic *vpic, struct i8259_reg_state *i8259, uint8_t val)
+static int32_t vpic_icw4(const struct acrn_vpic *vpic, struct i8259_reg_state *i8259, uint8_t val)
 {
+	int32_t ret;
+
 	dev_dbg(ACRN_DBG_PIC, "vm 0x%x: i8259 icw4 0x%x\n",
 		vpic->vm, val);
 
 	if ((val & ICW4_8086) == 0U) {
 		dev_dbg(ACRN_DBG_PIC,
 			"vpic microprocessor mode required\n");
-		return -1;
-	}
-
-	if ((val & ICW4_AEOI) != 0U) {
-		i8259->aeoi = true;
-	}
-
-	if ((val & ICW4_SFNM) != 0U) {
-		if (master_pic(vpic, i8259)) {
-			i8259->sfn = true;
-		} else {
-			dev_dbg(ACRN_DBG_PIC,
-			"Ignoring special fully nested mode on slave pic: %#x",
-			val);
+	        ret = -1;
+	} else {
+		if ((val & ICW4_AEOI) != 0U) {
+			i8259->aeoi = true;
 		}
+
+		if ((val & ICW4_SFNM) != 0U) {
+			if (master_pic(vpic, i8259)) {
+				i8259->sfn = true;
+			} else {
+				dev_dbg(ACRN_DBG_PIC,
+				"Ignoring special fully nested mode on slave pic: %#x",
+				val);
+			}
+		}
+
+		i8259->icw_num = 0U;
+		i8259->ready = true;
+		ret = 0;
 	}
 
-	i8259->icw_num = 0U;
-	i8259->ready = true;
-
-	return 0;
+	return ret;
 }
 
-static int vpic_ocw1(const struct acrn_vpic *vpic, struct i8259_reg_state *i8259, uint8_t val)
+static int32_t vpic_ocw1(const struct acrn_vpic *vpic, struct i8259_reg_state *i8259, uint8_t val)
 {
 	uint8_t pin, i, bit;
 	uint8_t old = i8259->mask;
@@ -321,7 +332,7 @@ static int vpic_ocw1(const struct acrn_vpic *vpic, struct i8259_reg_state *i8259
 
 			virt_pin = (master_pic(vpic, i8259)) ?
 					pin : (pin + 8U);
-			(void)ptdev_intx_pin_remap(vpic->vm,
+			(void)ptirq_intx_pin_remap(vpic->vm,
 					virt_pin, PTDEV_VPIN_PIC);
 		}
 		pin = (pin + 1U) & 0x7U;
@@ -330,7 +341,7 @@ static int vpic_ocw1(const struct acrn_vpic *vpic, struct i8259_reg_state *i8259
 	return 0;
 }
 
-static int vpic_ocw2(struct acrn_vpic *vpic, struct i8259_reg_state *i8259, uint8_t val)
+static int32_t vpic_ocw2(struct acrn_vpic *vpic, struct i8259_reg_state *i8259, uint8_t val)
 {
 	dev_dbg(ACRN_DBG_PIC, "vm 0x%x: i8259 ocw2 0x%x\n",
 		vpic->vm, val);
@@ -358,7 +369,7 @@ static int vpic_ocw2(struct acrn_vpic *vpic, struct i8259_reg_state *i8259, uint
 
 		/* if level ack PTDEV */
 		if ((i8259->elc & (1U << (isr_bit & 0x7U))) != 0U) {
-			ptdev_intx_ack(vpic->vm,
+			ptirq_intx_ack(vpic->vm,
 				(master_pic(vpic, i8259) ? isr_bit : isr_bit + 8U),
 				PTDEV_VPIN_PIC);
 		}
@@ -372,7 +383,7 @@ static int vpic_ocw2(struct acrn_vpic *vpic, struct i8259_reg_state *i8259, uint
 	return 0;
 }
 
-static int vpic_ocw3(struct acrn_vpic *vpic, struct i8259_reg_state *i8259, uint8_t val)
+static int32_t vpic_ocw3(struct acrn_vpic *vpic, struct i8259_reg_state *i8259, uint8_t val)
 {
 	dev_dbg(ACRN_DBG_PIC, "vm 0x%x: i8259 ocw3 0x%x\n",
 		vpic->vm, val);
@@ -405,34 +416,32 @@ static void vpic_set_pinstate(struct acrn_vpic *vpic, uint8_t pin,
 	uint8_t old_lvl;
 	bool lvl_trigger;
 
-	if (pin >= NR_VPIC_PINS_TOTAL) {
-		return;
-	}
-
-	i8259 = &vpic->i8259[pin >> 3U];
-	old_lvl = i8259->pin_state[pin & 0x7U];
-	if (level != 0U) {
-		i8259->pin_state[pin & 0x7U] = 1U;
-	} else {
-		i8259->pin_state[pin & 0x7U] = 0U;
-	}
-
-	lvl_trigger = ((vpic->i8259[pin >> 3U].elc & (1U << (pin & 0x7U))) != 0U);
-
-	if (((old_lvl == 0U) && (level == 1U)) ||
-			((level == 1U) && (lvl_trigger == true))) {
-		/* raising edge or level */
-		dev_dbg(ACRN_DBG_PIC, "pic pin%hhu: asserted\n", pin);
-		i8259->request |= (uint8_t)(1U << (pin & 0x7U));
-	} else if ((old_lvl == 1U) && (level == 0U)) {
-		/* falling edge */
-		dev_dbg(ACRN_DBG_PIC, "pic pin%hhu: deasserted\n", pin);
-		if (lvl_trigger) {
-			i8259->request &= ~(uint8_t)(1U << (pin & 0x7U));
+	if (pin < NR_VPIC_PINS_TOTAL) {
+		i8259 = &vpic->i8259[pin >> 3U];
+		old_lvl = i8259->pin_state[pin & 0x7U];
+		if (level != 0U) {
+			i8259->pin_state[pin & 0x7U] = 1U;
+		} else {
+			i8259->pin_state[pin & 0x7U] = 0U;
 		}
-	} else {
-		dev_dbg(ACRN_DBG_PIC, "pic pin%hhu: %s, ignored\n",
-			pin, (level != 0U) ? "asserted" : "deasserted");
+
+		lvl_trigger = ((vpic->i8259[pin >> 3U].elc & (1U << (pin & 0x7U))) != 0U);
+
+		if (((old_lvl == 0U) && (level == 1U)) ||
+				((level == 1U) && (lvl_trigger == true))) {
+			/* raising edge or level */
+			dev_dbg(ACRN_DBG_PIC, "pic pin%hhu: asserted\n", pin);
+			i8259->request |= (uint8_t)(1U << (pin & 0x7U));
+		} else if ((old_lvl == 1U) && (level == 0U)) {
+			/* falling edge */
+			dev_dbg(ACRN_DBG_PIC, "pic pin%hhu: deasserted\n", pin);
+			if (lvl_trigger) {
+				i8259->request &= ~(uint8_t)(1U << (pin & 0x7U));
+			}
+		} else {
+			dev_dbg(ACRN_DBG_PIC, "pic pin%hhu: %s, ignored\n",
+				pin, (level != 0U) ? "asserted" : "deasserted");
+		}
 	}
 }
 
@@ -444,7 +453,7 @@ static void vpic_set_pinstate(struct acrn_vpic *vpic, uint8_t pin,
  * @param[in] operation action options:GSI_SET_HIGH/GSI_SET_LOW/
  *			GSI_RAISING_PULSE/GSI_FALLING_PULSE
  *
- * @return void
+ * @return None
  */
 void vpic_set_irq(struct acrn_vm *vm, uint32_t irq, uint32_t operation)
 {
@@ -452,42 +461,38 @@ void vpic_set_irq(struct acrn_vm *vm, uint32_t irq, uint32_t operation)
 	struct i8259_reg_state *i8259;
 	uint8_t pin;
 
-	if (irq >= NR_VPIC_PINS_TOTAL) {
-		return;
-	}
+	if (irq < NR_VPIC_PINS_TOTAL) {
+		vpic = vm_pic(vm);
+		i8259 = &vpic->i8259[irq >> 3U];
+		pin = (uint8_t)irq;
 
-	vpic = vm_pic(vm);
-	i8259 = &vpic->i8259[irq >> 3U];
-	pin = (uint8_t)irq;
-
-	if (i8259->ready == false) {
-		return;
+		if (i8259->ready) {
+			spinlock_obtain(&(vpic->lock));
+			switch (operation) {
+			case GSI_SET_HIGH:
+				vpic_set_pinstate(vpic, pin, 1U);
+				break;
+			case GSI_SET_LOW:
+				vpic_set_pinstate(vpic, pin, 0U);
+				break;
+			case GSI_RAISING_PULSE:
+				vpic_set_pinstate(vpic, pin, 1U);
+				vpic_set_pinstate(vpic, pin, 0U);
+				break;
+			case GSI_FALLING_PULSE:
+				vpic_set_pinstate(vpic, pin, 0U);
+				vpic_set_pinstate(vpic, pin, 1U);
+				break;
+			default:
+				/*
+				 * The function caller could guarantee the pre condition.
+				 */
+				break;
+			}
+			vpic_notify_intr(vpic);
+			spinlock_release(&(vpic->lock));
+		}
 	}
-
-	spinlock_obtain(&(vpic->lock));
-	switch (operation) {
-	case GSI_SET_HIGH:
-		vpic_set_pinstate(vpic, pin, 1U);
-		break;
-	case GSI_SET_LOW:
-		vpic_set_pinstate(vpic, pin, 0U);
-		break;
-	case GSI_RAISING_PULSE:
-		vpic_set_pinstate(vpic, pin, 1U);
-		vpic_set_pinstate(vpic, pin, 0U);
-		break;
-	case GSI_FALLING_PULSE:
-		vpic_set_pinstate(vpic, pin, 0U);
-		vpic_set_pinstate(vpic, pin, 1U);
-		break;
-	default:
-		/*
-		 * The function caller could guarantee the pre condition.
-		 */
-		break;
-	}
-	vpic_notify_intr(vpic);
-	spinlock_release(&(vpic->lock));
 }
 
 uint32_t
@@ -521,7 +526,7 @@ void vpic_get_irq_trigger(struct acrn_vm *vm, uint32_t irq,
  * @param[inout] vecptr Pointer to vector buffer and will be filled
  *			with eligible vector if any.
  *
- * @return void.
+ * @return None
  */
 void vpic_pending_intr(struct acrn_vm *vm, uint32_t *vecptr)
 {
@@ -547,13 +552,11 @@ void vpic_pending_intr(struct acrn_vm *vm, uint32_t *vecptr)
 	 */
 	if (pin >= NR_VPIC_PINS_PER_CHIP) {
 		*vecptr = VECTOR_INVALID;
-		spinlock_release(&(vpic->lock));
-		return;
+	} else {
+		*vecptr = i8259->irq_base + pin;
+
+		dev_dbg(ACRN_DBG_PIC, "Got pending vector 0x%x\n", *vecptr);
 	}
-
-	*vecptr = i8259->irq_base + pin;
-
-	dev_dbg(ACRN_DBG_PIC, "Got pending vector 0x%x\n", *vecptr);
 
 	spinlock_release(&(vpic->lock));
 }
@@ -582,7 +585,7 @@ static void vpic_pin_accepted(struct i8259_reg_state *i8259, uint8_t pin)
  * @param[in] vm     Pointer to target VM
  * @param[in] vector Target virtual interrupt vector
  *
- * @return void
+ * @return None
  *
  * @pre vm != NULL
  */
@@ -613,7 +616,7 @@ void vpic_intr_accepted(struct acrn_vm *vm, uint32_t vector)
 	spinlock_release(&(vpic->lock));
 }
 
-static int vpic_read(struct acrn_vpic *vpic, struct i8259_reg_state *i8259,
+static int32_t vpic_read(struct acrn_vpic *vpic, struct i8259_reg_state *i8259,
 		uint16_t port, uint32_t *eax)
 {
 	uint8_t pin;
@@ -649,10 +652,10 @@ static int vpic_read(struct acrn_vpic *vpic, struct i8259_reg_state *i8259,
 	return 0;
 }
 
-static int vpic_write(struct acrn_vpic *vpic, struct i8259_reg_state *i8259,
+static int32_t vpic_write(struct acrn_vpic *vpic, struct i8259_reg_state *i8259,
 		uint16_t port, uint32_t *eax)
 {
-	int error;
+	int32_t error;
 	uint8_t val;
 
 	error = 0;
@@ -698,24 +701,25 @@ static int vpic_write(struct acrn_vpic *vpic, struct i8259_reg_state *i8259,
 	return error;
 }
 
-static int vpic_master_handler(struct acrn_vm *vm, bool in, uint16_t port,
+static int32_t vpic_master_handler(struct acrn_vm *vm, bool in, uint16_t port,
 		size_t bytes, uint32_t *eax)
 {
 	struct acrn_vpic *vpic;
 	struct i8259_reg_state *i8259;
+	int32_t ret;
 
 	vpic = vm_pic(vm);
 	i8259 = &vpic->i8259[0];
 
 	if (bytes != 1U) {
-		return -1;
+	        ret = -1;
+	} else if (in) {
+	        ret = vpic_read(vpic, i8259, port, eax);
+	} else {
+		ret = vpic_write(vpic, i8259, port, eax);
 	}
 
-	if (in) {
-		return vpic_read(vpic, i8259, port, eax);
-	}
-
-	return vpic_write(vpic, i8259, port, eax);
+	return ret;
 }
 
 static uint32_t vpic_master_io_read(struct acrn_vm *vm, uint16_t addr, size_t width)
@@ -740,24 +744,25 @@ static void vpic_master_io_write(struct acrn_vm *vm, uint16_t addr, size_t width
 	}
 }
 
-static int vpic_slave_handler(struct acrn_vm *vm, bool in, uint16_t port,
+static int32_t vpic_slave_handler(struct acrn_vm *vm, bool in, uint16_t port,
 		size_t bytes, uint32_t *eax)
 {
 	struct acrn_vpic *vpic;
 	struct i8259_reg_state *i8259;
+	int32_t ret;
 
 	vpic = vm_pic(vm);
 	i8259 = &vpic->i8259[1];
 
 	if (bytes != 1U) {
-		return -1;
+	        ret = -1;
+	} else if (in) {
+		ret = vpic_read(vpic, i8259, port, eax);
+	} else {
+		ret = vpic_write(vpic, i8259, port, eax);
 	}
 
-	if (in) {
-		return vpic_read(vpic, i8259, port, eax);
-	}
-
-	return vpic_write(vpic, i8259, port, eax);
+	return ret;
 }
 
 static uint32_t vpic_slave_io_read(struct acrn_vm *vm, uint16_t addr, size_t width)
@@ -782,48 +787,50 @@ static void vpic_slave_io_write(struct acrn_vm *vm, uint16_t addr, size_t width,
 	}
 }
 
-static int vpic_elc_handler(struct acrn_vm *vm, bool in, uint16_t port, size_t bytes,
+static int32_t vpic_elc_handler(struct acrn_vm *vm, bool in, uint16_t port, size_t bytes,
 		uint32_t *eax)
 {
 	struct acrn_vpic *vpic;
 	bool is_master;
+	int32_t ret;
 
 	vpic = vm_pic(vm);
 	is_master = (port == IO_ELCR1);
 
-	if (bytes != 1U) {
-		return -1;
-	}
+	if (bytes == 1U) {
+		spinlock_obtain(&(vpic->lock));
 
-	spinlock_obtain(&(vpic->lock));
-
-	if (in) {
-		if (is_master) {
-			*eax = vpic->i8259[0].elc;
+		if (in) {
+			if (is_master) {
+				*eax = vpic->i8259[0].elc;
+			} else {
+				*eax = vpic->i8259[1].elc;
+			}
 		} else {
-			*eax = vpic->i8259[1].elc;
+			/*
+			 * For the master PIC the cascade channel (IRQ2), the
+			 * heart beat timer (IRQ0), and the keyboard
+			 * controller (IRQ1) cannot be programmed for level
+			 * mode.
+			 *
+			 * For the slave PIC the real time clock (IRQ8) and
+			 * the floating point error interrupt (IRQ13) cannot
+			 * be programmed for level mode.
+			 */
+			if (is_master) {
+				vpic->i8259[0].elc = (uint8_t)(*eax & 0xf8U);
+			} else {
+				vpic->i8259[1].elc = (uint8_t)(*eax & 0xdeU);
+			}
 		}
+
+		spinlock_release(&(vpic->lock));
+		ret = 0;
 	} else {
-		/*
-		 * For the master PIC the cascade channel (IRQ2), the
-		 * heart beat timer (IRQ0), and the keyboard
-		 * controller (IRQ1) cannot be programmed for level
-		 * mode.
-		 *
-		 * For the slave PIC the real time clock (IRQ8) and
-		 * the floating point error interrupt (IRQ13) cannot
-		 * be programmed for level mode.
-		 */
-		if (is_master) {
-			vpic->i8259[0].elc = (uint8_t)(*eax & 0xf8U);
-		} else {
-			vpic->i8259[1].elc = (uint8_t)(*eax & 0xdeU);
-		}
+	        ret = -1;
 	}
 
-	spinlock_release(&(vpic->lock));
-
-	return 0;
+	return ret;
 }
 
 static uint32_t vpic_elc_io_read(struct acrn_vm *vm, uint16_t addr, size_t width)

@@ -94,8 +94,6 @@ struct trusty_key_info {
 };
 
 struct secure_world_memory {
-	/* The secure world base address of GPA in SOS */
-	uint64_t base_gpa_in_sos;
 	/* The original secure world base address allocated by bootloader */
 	uint64_t base_gpa_in_uos;
 	/* The secure world base address of HPA */
@@ -128,8 +126,8 @@ struct trusty_startup_param {
 	uint8_t padding[4];
 };
 
-void switch_world(struct acrn_vcpu *vcpu, int next_world);
-bool initialize_trusty(struct acrn_vcpu *vcpu, uint64_t param);
+void switch_world(struct acrn_vcpu *vcpu, int32_t next_world);
+bool initialize_trusty(struct acrn_vcpu *vcpu, const struct trusty_boot_param *boot_param);
 void destroy_secure_world(struct acrn_vm *vm, bool need_clr_mem);
 void save_sworld_context(struct acrn_vcpu *vcpu);
 void restore_sworld_context(struct acrn_vcpu *vcpu);

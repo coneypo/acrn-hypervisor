@@ -418,9 +418,6 @@ Here is a list of major memory related APIs in HV:
 EPT/VPID Capability Checking
 ----------------------------
 
-.. doxygenfunction:: check_vmx_mmu_cap
-   :project: Project ACRN
-
 Data Transferring between hypervisor and VM
 -------------------------------------------
 
@@ -443,9 +440,6 @@ Address Space Translation
    :project: Project ACRN
 
 .. doxygenfunction:: vm0_hpa2gpa
-   :project: Project ACRN
-
-.. doxygenfunction:: check_continuous_hpa
    :project: Project ACRN
 
 EPT
@@ -475,13 +469,13 @@ EPT
 Virtual MTRR
 ------------
 
-.. doxygenfunction:: init_mtrr
+.. doxygenfunction:: init_vmtrr
    :project: Project ACRN
 
-.. doxygenfunction:: mtrr_wrmsr
+.. doxygenfunction:: write_vmtrr
    :project: Project ACRN
 
-.. doxygenfunction:: mtrr_rdmsr
+.. doxygenfunction:: read_vmtrr
    :project: Project ACRN
 
 VPID

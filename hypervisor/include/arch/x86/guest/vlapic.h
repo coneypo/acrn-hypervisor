@@ -30,6 +30,8 @@
 #ifndef VLAPIC_H
 #define VLAPIC_H
 
+#include <page.h>
+
 
 /**
  * @file vlapic.h
@@ -73,7 +75,7 @@ struct acrn_vlapic {
 	struct acrn_vcpu		*vcpu;
 
 	uint32_t		esr_pending;
-	int			esr_firing;
+	int32_t			esr_firing;
 
 	struct vlapic_timer	vtimer;
 
@@ -104,7 +106,7 @@ struct acrn_vlapic {
 	 */
 	uint32_t	svr_last;
 	uint32_t	lvt_last[VLAPIC_MAXLVT_INDEX + 1];
-} __aligned(CPU_PAGE_SIZE);
+} __aligned(PAGE_SIZE);
 
 
 /* APIC write handlers */
@@ -126,13 +128,13 @@ uint64_t vlapic_get_cr8(const struct acrn_vlapic *vlapic);
  * @param[inout] vecptr Pointer to vector buffer and will be filled
  *               with eligible vector if any.
  *
- * @return 0 - There is no eligible pending vector.
- * @return 1 - There is pending vector.
+ * @retval 0 There is no eligible pending vector.
+ * @retval 1 There is pending vector.
  *
  * @remark The vector does not automatically transition to the ISR as a
  *	   result of calling this function.
  */
-int vlapic_pending_intr(const struct acrn_vlapic *vlapic, uint32_t *vecptr);
+int32_t vlapic_pending_intr(const struct acrn_vlapic *vlapic, uint32_t *vecptr);
 
 /**
  * @brief Accept virtual interrupt.
@@ -145,7 +147,7 @@ int vlapic_pending_intr(const struct acrn_vlapic *vlapic, uint32_t *vecptr);
  * @param[in] vlapic Pointer to target vLAPIC data structure
  * @param[in] vector Target virtual interrupt vector
  *
- * @return void
+ * @return None
  *
  * @pre vlapic != NULL
  */
@@ -161,7 +163,7 @@ void vlapic_intr_accepted(struct acrn_vlapic *vlapic, uint32_t vector);
  *
  * @param[in] dest_pcpu_id Target CPU ID.
  *
- * @return void
+ * @return None
  */
 void vlapic_post_intr(uint16_t dest_pcpu_id);
 
@@ -179,8 +181,8 @@ void vlapic_post_intr(uint16_t dest_pcpu_id);
  */
 uint64_t apicv_get_pir_desc_paddr(struct acrn_vcpu *vcpu);
 
-int vlapic_rdmsr(struct acrn_vcpu *vcpu, uint32_t msr, uint64_t *rval);
-int vlapic_wrmsr(struct acrn_vcpu *vcpu, uint32_t msr, uint64_t wval);
+int32_t vlapic_rdmsr(struct acrn_vcpu *vcpu, uint32_t msr, uint64_t *rval);
+int32_t vlapic_wrmsr(struct acrn_vcpu *vcpu, uint32_t msr, uint64_t wval);
 
 /*
  * Signals to the LAPIC that an interrupt at 'vector' needs to be generated
@@ -226,12 +228,12 @@ vlapic_intr_edge(struct acrn_vcpu *vcpu, uint32_t vector)
  *			   interrupt to all vCPUs.
  * @param[in] vector       Vector to be fired.
  *
- * @return 0 on success.
- * @return -EINVAL on error that vcpu_id_arg or vector is invalid.
+ * @retval 0 on success.
+ * @retval -EINVAL on error that vcpu_id_arg or vector is invalid.
  *
  * @pre vm != NULL
  */
-int vlapic_set_local_intr(struct acrn_vm *vm, uint16_t vcpu_id_arg, uint32_t vector);
+int32_t vlapic_set_local_intr(struct acrn_vm *vm, uint16_t vcpu_id_arg, uint32_t vector);
 
 /**
  * @brief Inject MSI to target VM.
@@ -240,12 +242,12 @@ int vlapic_set_local_intr(struct acrn_vm *vm, uint16_t vcpu_id_arg, uint32_t vec
  * @param[in] addr MSI address.
  * @param[in] msg  MSI data.
  *
- * @return 0 on success.
- * @return non-zero on error that addr is invalid.
+ * @retval 0 on success.
+ * @retval -1 on error that addr is invalid.
  *
  * @pre vm != NULL
  */
-int vlapic_intr_msi(struct acrn_vm *vm, uint64_t addr, uint64_t msg);
+int32_t vlapic_intr_msi(struct acrn_vm *vm, uint64_t addr, uint64_t msg);
 
 void vlapic_deliver_intr(struct acrn_vm *vm, bool level, uint32_t dest,
 		bool phys, uint32_t delmode, uint32_t vec, bool rh);
@@ -263,11 +265,15 @@ void vlapic_set_tmr_one_vec(struct acrn_vlapic *vlapic, uint32_t delmode,
 
 void vlapic_apicv_batch_set_tmr(struct acrn_vlapic *vlapic);
 uint32_t vlapic_get_apicid(struct acrn_vlapic *vlapic);
-int vlapic_create(struct acrn_vcpu *vcpu);
+int32_t vlapic_create(struct acrn_vcpu *vcpu);
 /*
  *  @pre vcpu != NULL
  */
 void vlapic_free(struct acrn_vcpu *vcpu);
+/**
+ * @pre vlapic->vm != NULL
+ * @pre vlapic->vcpu->vcpu_id < CONFIG_MAX_VCPUS_PER_VM
+ */
 void vlapic_init(struct acrn_vlapic *vlapic);
 void vlapic_reset(struct acrn_vlapic *vlapic);
 void vlapic_restore(struct acrn_vlapic *vlapic, const struct lapic_regs *regs);
@@ -275,10 +281,10 @@ bool vlapic_enabled(const struct acrn_vlapic *vlapic);
 uint64_t vlapic_apicv_get_apic_access_addr(void);
 uint64_t vlapic_apicv_get_apic_page_addr(struct acrn_vlapic *vlapic);
 void vlapic_apicv_inject_pir(struct acrn_vlapic *vlapic);
-int apic_access_vmexit_handler(struct acrn_vcpu *vcpu);
-int apic_write_vmexit_handler(struct acrn_vcpu *vcpu);
-int veoi_vmexit_handler(struct acrn_vcpu *vcpu);
-int tpr_below_threshold_vmexit_handler(__unused struct acrn_vcpu *vcpu);
+int32_t apic_access_vmexit_handler(struct acrn_vcpu *vcpu);
+int32_t apic_write_vmexit_handler(struct acrn_vcpu *vcpu);
+int32_t veoi_vmexit_handler(struct acrn_vcpu *vcpu);
+int32_t tpr_below_threshold_vmexit_handler(__unused struct acrn_vcpu *vcpu);
 void calcvdest(struct acrn_vm *vm, uint64_t *dmask, uint32_t dest, bool phys);
 
 /**

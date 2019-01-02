@@ -61,6 +61,10 @@ div.rst-other-versions dl {
     color: #000000;
 }
 
+div.non-compliant-code div.highlight {
+   background: #f7d7d7;
+}
+
 /* Make the version number more visible */
 .wy-side-nav-search>div.version {
     color: rgba(255,255,255,1);
@@ -109,9 +113,12 @@ table.hlist {
     width: 95% !important;
 }
 
-/*  override rtd theme white-space no-wrap in table heading and content  */
+/*  override rtd theme white-space no-wrap in table heading and content
+ *  and top align for content too (not middle)
+ */
 th,td {
     white-space: normal !important;
+    vertical-align: top !important;
 }
 
 /* dbk tweak for doxygen-generated API headings (for RTD theme) */
@@ -132,6 +139,13 @@ th,td {
 }
 .rst-content div.breathe-sectiondef {
   padding-left: 0 !important;
+}
+
+/* doxygenXX item color tweaks, light blue background with dark blue top border */
+.rst-content dl:not(.docutils) dl dt {
+  background: #e7f2fa !important;
+  border-top: solid 3px #2980B9 !important;
+  border-left: none !important; */
 }
 
 /* tweak display of option tables to make first column wider */

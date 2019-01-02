@@ -93,7 +93,7 @@ vm_create(const char *name, uint64_t req_buf)
 	uuid_t vm_uuid;
 
 	memset(&create_vm, 0, sizeof(struct acrn_create_vm));
-	ctx = calloc(1, sizeof(struct vmctx) + strlen(name) + 1);
+	ctx = calloc(1, sizeof(struct vmctx) + strnlen(name, PATH_MAX) + 1);
 	assert(ctx != NULL);
 	assert(devfd == -1);
 
@@ -122,7 +122,7 @@ vm_create(const char *name, uint64_t req_buf)
 	ctx->fd = devfd;
 	ctx->lowmem_limit = 2 * GB;
 	ctx->name = (char *)(ctx + 1);
-	strcpy(ctx->name, name);
+	strncpy(ctx->name, name, strnlen(name, PATH_MAX) + 1);
 
 	/* Set trusty enable flag */
 	if (trusty_enabled)
@@ -292,6 +292,8 @@ vm_setup_memory(struct vmctx *ctx, size_t memsize)
 		ctx->highmem = 0;
 	}
 
+	ctx->biosmem = high_bios_size();
+
 	return hugetlb_setup_memory(ctx);
 }
 
@@ -382,6 +384,12 @@ void
 vm_reset(struct vmctx *ctx)
 {
 	ioctl(ctx->fd, IC_RESET_VM, &ctx->vmid);
+}
+
+void
+vm_clear_ioreq(struct vmctx *ctx)
+{
+	ioctl(ctx->fd, IC_CLEAR_VM_IOREQ, NULL);
 }
 
 static int suspend_mode = VM_SUSPEND_NONE;

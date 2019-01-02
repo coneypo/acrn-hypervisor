@@ -200,7 +200,7 @@ pm1_enable_handler(struct vmctx *ctx, int vcpu, int in, int port, int bytes,
 		 * the global lock, but ACPI-CA whines profusely if it
 		 * can't set GBL_EN.
 		 */
-		pm1_enable = *eax & (PM1_PWRBTN_EN | PM1_GBL_EN);
+		pm1_enable = *eax & (PM1_RTC_EN | PM1_PWRBTN_EN | PM1_GBL_EN);
 		sci_update(ctx);
 	}
 	pthread_mutex_unlock(&pm_lock);
@@ -296,7 +296,7 @@ smi_cmd_handler(struct vmctx *ctx, int vcpu, int in, int port, int bytes,
 		pm1_control |= PM1_SCI_EN;
 		if (power_button == NULL) {
 			power_button = mevent_add(SIGTERM, EVF_SIGNAL,
-			    power_button_handler, ctx);
+				power_button_handler, ctx, NULL, NULL);
 			old_power_handler = signal(SIGTERM, SIG_IGN);
 		}
 		break;

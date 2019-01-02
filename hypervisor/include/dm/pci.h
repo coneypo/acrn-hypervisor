@@ -147,12 +147,16 @@ static inline uint32_t pci_bar_offset(uint32_t idx)
 
 static inline bool pci_bar_access(uint32_t offset)
 {
+	bool ret;
+
 	if ((offset >= pci_bar_offset(0U))
 		&& (offset < pci_bar_offset(PCI_BAR_COUNT))) {
-		return true;
+		ret = true;
 	} else {
-		return false;
+	        ret = false;
 	}
+
+	return ret;
 }
 
 static inline uint8_t pci_bus(uint16_t bdf)
@@ -174,6 +178,6 @@ uint32_t pci_pdev_read_cfg(union pci_bdf bdf, uint32_t offset, uint32_t bytes);
 void pci_pdev_write_cfg(union pci_bdf bdf, uint32_t offset, uint32_t bytes, uint32_t val);
 void enable_disable_pci_intx(union pci_bdf bdf, bool enable);
 
-void pci_scan_bus(pci_enumeration_cb cb, void *data);
+void pci_scan_bus(pci_enumeration_cb cb, void *cb_data);
 
 #endif /* PCI_H_ */

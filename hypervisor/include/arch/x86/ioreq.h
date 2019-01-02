@@ -115,7 +115,7 @@ struct vm_io_handler_desc {
 
 /* Typedef for MMIO handler and range check routine */
 struct mmio_request;
-typedef int (*hv_mem_io_handler_t)(struct io_request *io_req, void *handler_private_data);
+typedef int32_t (*hv_mem_io_handler_t)(struct io_request *io_req, void *handler_private_data);
 
 /**
  * @brief Structure for MMIO handler node
@@ -220,10 +220,10 @@ void   register_io_emulation_handler(struct acrn_vm *vm, uint32_t pio_idx,
  * @param end The end of the range (exclusive) \p read_write can emulate
  * @param handler_private_data Handler-specific data which will be passed to \p read_write when called
  *
- * @return 0 - Registration succeeds
- * @return -EINVAL - \p read_write is NULL, \p end is not larger than \p start or \p vm has been launched
+ * @retval 0 Registration succeeds
+ * @retval -EINVAL \p read_write is NULL, \p end is not larger than \p start or \p vm has been launched
  */
-int register_mmio_emulation_handler(struct acrn_vm *vm,
+int32_t register_mmio_emulation_handler(struct acrn_vm *vm,
 	hv_mem_io_handler_t read_write, uint64_t start,
 	uint64_t end, void *handler_private_data);
 
@@ -262,11 +262,11 @@ void dm_emulate_mmio_post(struct acrn_vcpu *vcpu);
  * @param vcpu The virtual CPU that triggers the MMIO access
  * @param io_req The I/O request holding the details of the MMIO access
  *
- * @return 0       - Successfully emulated by registered handlers.
- * @return IOREQ_PENDING - The I/O request is delivered to VHM.
- * @return -EIO    - The request spans multiple devices and cannot be emulated.
- * @return -EINVAL - \p io_req has an invalid type.
- * @return Negative on other errors during emulation.
+ * @retval 0       Successfully emulated by registered handlers.
+ * @retval IOREQ_PENDING The I/O request is delivered to VHM.
+ * @retval -EIO    The request spans multiple devices and cannot be emulated.
+ * @retval -EINVAL \p io_req has an invalid type.
+ * @retval <0 on other errors during emulation.
  */
 int32_t emulate_io(struct acrn_vcpu *vcpu, struct io_request *io_req);
 
@@ -292,18 +292,29 @@ int32_t acrn_insert_request_wait(struct acrn_vcpu *vcpu, const struct io_request
  *
  * @param vm The VM whose IO requests to be reset
  *
- * @return N/A
+ * @return None
  */
 void reset_vm_ioreqs(struct acrn_vm *vm);
 
 /**
- * @brief Handle completed ioreq if any one pending
+ * @brief Get the state of VHM request
  *
- * @param pcpu_id The physical cpu id of vcpu whose IO request to be checked
+ * @param vm Target VM context
+ * @param vhm_req_id VHM Request ID
  *
- * @return N/A
+ * @return State of the IO Request.
  */
-void handle_complete_ioreq(uint16_t pcpu_id);
+uint32_t get_vhm_req_state(struct acrn_vm *vm, uint16_t vhm_req_id);
+
+/**
+ * @brief Set the state of VHM request
+ *
+ * @param vm Target VM context
+ * @param vhm_req_id VHM Request ID
+ * @param state  State to be set
+ * @return None
+ */
+void set_vhm_req_state(struct acrn_vm *vm, uint16_t vhm_req_id, uint32_t state);
 
 /**
  * @}

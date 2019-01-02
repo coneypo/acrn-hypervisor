@@ -10,10 +10,10 @@
 #include <spinlock.h>
 
 #define SHELL_CMD_MAX_LEN		100U
-#define SHELL_STRING_MAX_LEN		(CPU_PAGE_SIZE << 2U)
+#define SHELL_STRING_MAX_LEN		(PAGE_SIZE << 2U)
 
 /* Shell Command Function */
-typedef int (*shell_cmd_fn_t)(int argc, char **argv);
+typedef int32_t (*shell_cmd_fn_t)(int32_t argc, char **argv);
 
 /* Shell Command */
 struct shell_cmd {
@@ -77,10 +77,6 @@ struct shell {
 #define SHELL_CMD_VIOAPIC		"vioapic"
 #define SHELL_CMD_VIOAPIC_PARAM		"<vm id>"
 #define SHELL_CMD_VIOAPIC_HELP		"show vioapic info"
-
-#define SHELL_CMD_LOGDUMP		"logdump"
-#define SHELL_CMD_LOGDUMP_PARAM		"<pcpu id>"
-#define SHELL_CMD_LOGDUMP_HELP		"log buffer dump"
 
 #define SHELL_CMD_LOG_LVL		"loglevel"
 #define SHELL_CMD_LOG_LVL_PARAM		"[<console_loglevel> [<mem_loglevel> " \

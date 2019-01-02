@@ -141,7 +141,6 @@ struct ext_context {
 	uint64_t ia32_kernel_gs_base;
 
 	uint64_t ia32_pat;
-	uint64_t vmx_ia32_pat;
 	uint32_t ia32_sysenter_cs;
 	uint64_t ia32_sysenter_esp;
 	uint64_t ia32_sysenter_eip;
@@ -166,6 +165,10 @@ struct ext_context {
 #define NORMAL_WORLD	0
 #define SECURE_WORLD	1
 
+#define NUM_WORLD_MSRS		2U
+#define NUM_COMMON_MSRS		6U
+#define NUM_GUEST_MSRS		(NUM_WORLD_MSRS + NUM_COMMON_MSRS)
+
 struct event_injection_info {
 	uint32_t intr_info;
 	uint32_t error_code;
@@ -174,15 +177,43 @@ struct event_injection_info {
 struct cpu_context {
 	struct run_context run_ctx;
 	struct ext_context ext_ctx;
+
+	/* per world MSRs, need isolation between secure and normal world */
+	uint32_t world_msrs[NUM_WORLD_MSRS];
+};
+
+/* Intel SDM 24.8.2, the address must be 16-byte aligned */
+struct msr_store_entry {
+	uint32_t msr_num;
+	uint32_t reserved;
+	uint64_t value;
+} __aligned(16);
+
+enum {
+	MSR_AREA_TSC_AUX = 0,
+	MSR_AREA_COUNT,
+};
+
+struct msr_store_area {
+	struct msr_store_entry guest[MSR_AREA_COUNT];
+	struct msr_store_entry host[MSR_AREA_COUNT];
 };
 
 struct acrn_vcpu_arch {
 	/* vmcs region for this vcpu, MUST be 4KB-aligned */
-	uint8_t vmcs[CPU_PAGE_SIZE];
+	uint8_t vmcs[PAGE_SIZE];
 	/* per vcpu lapic */
 	struct acrn_vlapic vlapic;
-	int cur_context;
+
+#ifdef CONFIG_MTRR_ENABLED
+	struct acrn_vmtrr vmtrr;
+#endif
+
+	int32_t cur_context;
 	struct cpu_context contexts[NR_WORLD];
+
+	/* common MSRs, world_msrs[] is a subset of it */
+	uint64_t guest_msrs[NUM_GUEST_MSRS];
 
 	uint16_t vpid;
 
@@ -199,9 +230,6 @@ struct acrn_vcpu_arch {
 	uint32_t irq_window_enabled;
 	uint32_t nrexits;
 
-	/* Auxiliary TSC value */
-	uint64_t msr_tsc_aux;
-
 	/* VCPU context state information */
 	uint32_t exit_reason;
 	uint32_t idt_vectoring_info;
@@ -217,7 +245,9 @@ struct acrn_vcpu_arch {
 	bool inject_event_pending;
 	struct event_injection_info inject_info;
 
-} __aligned(CPU_PAGE_SIZE);
+	/* List of MSRS to be stored and loaded on VM exits or VM entries */
+	struct msr_store_area msr_area;
+} __aligned(PAGE_SIZE);
 
 struct acrn_vm;
 struct acrn_vcpu {
@@ -234,7 +264,7 @@ struct acrn_vcpu {
 	volatile enum vcpu_state dbg_req_state;
 	uint64_t sync;	/*hold the bit events*/
 
-	struct list_head run_list; /* inserted to schedule runqueue */
+	struct sched_object sched_obj;
 	uint64_t pending_pre_work; /* any pre work pending? */
 	bool launched; /* Whether the vcpu is launched on target pcpu */
 	uint32_t paused_cnt; /* how many times vcpu is paused */
@@ -242,21 +272,9 @@ struct acrn_vcpu {
 
 	struct io_request req; /* used by io/ept emulation */
 
-	/* save guest msr tsc aux register.
-	 * Before VMENTRY, save guest MSR_TSC_AUX to this fields.
-	 * After VMEXIT, restore this fields to guest MSR_TSC_AUX.
-	 * This is only temperary workaround. Once MSR emulation
-	 * is enabled, we should remove this fields and related
-	 * code.
-	 */
-	uint64_t msr_tsc_aux_guest;
-	uint64_t guest_msrs[IDX_MAX_MSR];
-#ifdef CONFIG_MTRR_ENABLED
-	struct mtrr_state mtrr;
-#endif /* CONFIG_MTRR_ENABLED */
 	uint64_t reg_cached;
 	uint64_t reg_updated;
-} __aligned(CPU_PAGE_SIZE);
+} __aligned(PAGE_SIZE);
 
 struct vcpu_dump {
 	struct acrn_vcpu *vcpu;
@@ -280,6 +298,9 @@ vcpu_vlapic(struct acrn_vcpu *vcpu)
 {
 	return &(vcpu->arch.vlapic);
 }
+
+void default_idle(struct sched_object *obj);
+void vcpu_thread(struct sched_object *obj);
 
 /* External Interfaces */
 
@@ -453,8 +474,29 @@ uint64_t vcpu_get_cr4(struct acrn_vcpu *vcpu);
  */
 void vcpu_set_cr4(struct acrn_vcpu *vcpu, uint64_t val);
 
-uint64_t vcpu_get_pat_ext(const struct acrn_vcpu *vcpu);
-void vcpu_set_pat_ext(struct acrn_vcpu *vcpu, uint64_t val);
+/**
+ * @brief get guest emulated MSR
+ *
+ * Get the content of emulated guest MSR
+ *
+ * @param[in] vcpu pointer to vcpu data structure
+ * @param[in] msr the guest MSR
+ *
+ * @return the value of emulated MSR.
+ */
+uint64_t vcpu_get_guest_msr(const struct acrn_vcpu *vcpu, uint32_t msr);
+
+/**
+ * @brief set guest emulated MSR
+ *
+ * Update the content of emulated guest MSR
+ *
+ * @param[in] vcpu pointer to vcpu data structure
+ * @param[in] msr the guest MSR
+ * @param[in] val the value to set the target MSR
+ *
+ */
+void vcpu_set_guest_msr(struct acrn_vcpu *vcpu, uint32_t msr, uint64_t val);
 
 /**
  * @brief set all the vcpu registers
@@ -512,9 +554,9 @@ struct acrn_vcpu* get_ever_run_vcpu(uint16_t pcpu_id);
  * @param[in] vm pointer to vm data structure, this vcpu will owned by this vm.
  * @param[out] rtn_vcpu_handle pointer to the created vcpu
  *
- * @return 0: vcpu created successfully, other values failed.
+ * @retval 0 vcpu created successfully, other values failed.
  */
-int create_vcpu(uint16_t pcpu_id, struct acrn_vm *vm, struct acrn_vcpu **rtn_vcpu_handle);
+int32_t create_vcpu(uint16_t pcpu_id, struct acrn_vm *vm, struct acrn_vcpu **rtn_vcpu_handle);
 
 /**
  * @brief run into non-root mode based on vcpu setting
@@ -525,11 +567,11 @@ int create_vcpu(uint16_t pcpu_id, struct acrn_vm *vm, struct acrn_vcpu **rtn_vcp
  * @param[inout] vcpu pointer to vcpu data structure
  * @pre vcpu != NULL
  *
- * @return 0: vcpu run successfully, other values failed.
+ * @retval 0 vcpu run successfully, other values failed.
  */
-int run_vcpu(struct acrn_vcpu *vcpu);
+int32_t run_vcpu(struct acrn_vcpu *vcpu);
 
-int shutdown_vcpu(struct acrn_vcpu *vcpu);
+int32_t shutdown_vcpu(struct acrn_vcpu *vcpu);
 
 /**
  * @brief unmap the vcpu with pcpu and free its vlapic
@@ -584,9 +626,9 @@ void schedule_vcpu(struct acrn_vcpu *vcpu);
  * Create a vcpu for the vm, and mapped to the pcpu.
  *
  * @param[inout] vm pointer to vm data structure
- * @param[in] pcpu_id which the vcpu will be mapped 
+ * @param[in] pcpu_id which the vcpu will be mapped
  */
-int prepare_vcpu(struct acrn_vm *vm, uint16_t pcpu_id);
+int32_t prepare_vcpu(struct acrn_vm *vm, uint16_t pcpu_id);
 
 void request_vcpu_pre_work(struct acrn_vcpu *vcpu, uint16_t pre_work_id);
 

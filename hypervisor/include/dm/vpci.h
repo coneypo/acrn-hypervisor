@@ -34,14 +34,14 @@
 
 struct pci_vdev;
 struct pci_vdev_ops {
-	int (*init)(struct pci_vdev *vdev);
+	int32_t (*init)(struct pci_vdev *vdev);
 
-	int (*deinit)(struct pci_vdev *vdev);
+	int32_t (*deinit)(struct pci_vdev *vdev);
 
-	int (*cfgwrite)(struct pci_vdev *vdev, uint32_t offset,
+	int32_t (*cfgwrite)(struct pci_vdev *vdev, uint32_t offset,
 		uint32_t bytes, uint32_t val);
 
-	int (*cfgread)(struct pci_vdev *vdev, uint32_t offset,
+	int32_t (*cfgread)(const struct pci_vdev *vdev, uint32_t offset,
 		uint32_t bytes, uint32_t *val);
 };
 
@@ -66,13 +66,13 @@ struct pci_pdev {
 };
 
 /* MSI capability structure */
-struct msi {
+struct pci_msi {
 	uint32_t  capoff;
 	uint32_t  caplen;
 };
 
 /* MSI-X capability structure */
-struct msix {
+struct pci_msix {
 	struct msix_table_entry tables[CONFIG_MAX_MSIX_TABLE_NUM];
 	uint64_t  mmio_gpa;
 	uint64_t  mmio_hva;
@@ -86,7 +86,7 @@ struct msix {
 	uint32_t  table_count;
 };
 
-union cfgdata {
+union pci_cfgdata {
 	uint8_t data_8[PCI_REGMAX + 1U];
 	uint16_t data_16[(PCI_REGMAX + 1U) >> 2U];
 	uint32_t data_32[(PCI_REGMAX + 1U) >> 4U];
@@ -98,23 +98,23 @@ struct pci_vdev {
 	struct pci_vdev_ops ops[MAX_VPCI_DEV_OPS];
 	uint32_t nr_ops;
 #else
-	struct pci_vdev_ops *ops;
+	const struct pci_vdev_ops *ops;
 #endif
 
-	struct vpci *vpci;
+	struct acrn_vpci *vpci;
 	/* The bus/device/function triple of the virtual PCI device. */
 	union pci_bdf vbdf;
 
 	struct pci_pdev pdev;
 
-	union cfgdata cfgdata;
+	union pci_cfgdata cfgdata;
 
 	/* The bar info of the virtual PCI device. */
 	struct pci_bar bar[PCI_BAR_COUNT];
 
 #ifndef CONFIG_PARTITION_MODE
-	struct msi msi;
-	struct msix msix;
+	struct pci_msi msi;
+	struct pci_msix msix;
 #endif
 };
 
@@ -125,27 +125,29 @@ struct pci_addr_info {
 };
 
 struct vpci_ops {
-	int (*init)(struct acrn_vm *vm);
+	int32_t (*init)(struct acrn_vm *vm);
 	void (*deinit)(struct acrn_vm *vm);
-	void (*cfgread)(struct vpci *vpci, union pci_bdf vbdf, uint32_t offset,
+	void (*cfgread)(struct acrn_vpci *vpci, union pci_bdf vbdf, uint32_t offset,
 		uint32_t bytes, uint32_t *val);
-	void (*cfgwrite)(struct vpci *vpci, union pci_bdf vbdf, uint32_t offset,
+	void (*cfgwrite)(struct acrn_vpci *vpci, union pci_bdf vbdf, uint32_t offset,
 		uint32_t bytes, uint32_t val);
 };
 
 
-struct vpci {
+struct acrn_vpci {
 	struct acrn_vm *vm;
 	struct pci_addr_info addr_info;
-	struct vpci_ops *ops;
+	const struct vpci_ops *ops;
 };
 
-extern struct pci_vdev_ops pci_ops_vdev_hostbridge;
-extern struct pci_vdev_ops pci_ops_vdev_pt;
+#ifdef CONFIG_PARTITION_MODE
+extern const struct pci_vdev_ops pci_ops_vdev_hostbridge;
+extern const struct pci_vdev_ops pci_ops_vdev_pt;
+#endif
 
 void vpci_init(struct acrn_vm *vm);
 void vpci_cleanup(struct acrn_vm *vm);
-void vpci_set_ptdev_intr_info(struct acrn_vm *target_vm, uint16_t vbdf, uint16_t pbdf);
-void vpci_reset_ptdev_intr_info(struct acrn_vm *target_vm, uint16_t vbdf, uint16_t pbdf);
+void vpci_set_ptdev_intr_info(const struct acrn_vm *target_vm, uint16_t vbdf, uint16_t pbdf);
+void vpci_reset_ptdev_intr_info(const struct acrn_vm *target_vm, uint16_t vbdf, uint16_t pbdf);
 
 #endif /* VPCI_H_ */

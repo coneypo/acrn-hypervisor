@@ -8,13 +8,9 @@
 #include <bsp_extern.h>
 #include <multiboot.h>
 #include <reloc.h>
+#include <e820.h>
 
 #define ACRN_DBG_GUEST	6U
-
-/* for VM0 e820 */
-uint32_t e820_entries;
-struct e820_entry e820[E820_MAX_ENTRIES];
-struct e820_mem_params e820_mem;
 
 struct page_walk_info {
 	uint64_t top_entry;	/* Top level paging structure entry */
@@ -72,7 +68,7 @@ enum vm_paging_mode get_vcpu_paging_mode(struct acrn_vcpu *vcpu)
 
 /* TODO: Add code to check for Revserved bits, SMAP and PKE when do translation
  * during page walk */
-static int local_gva2gpa_common(struct acrn_vcpu *vcpu, const struct page_walk_info *pw_info,
+static int32_t local_gva2gpa_common(struct acrn_vcpu *vcpu, const struct page_walk_info *pw_info,
 	uint64_t gva, uint64_t *gpa, uint32_t *err_code)
 {
 	uint32_t i;
@@ -81,8 +77,8 @@ static int local_gva2gpa_common(struct acrn_vcpu *vcpu, const struct page_walk_i
 	void *base;
 	uint64_t entry;
 	uint64_t addr, page_size;
-	int ret = 0;
-	int fault = 0;
+	int32_t ret = 0;
+	int32_t fault = 0;
 	bool is_user_mode_addr = true;
 	bool is_page_rw_flags_on = true;
 
@@ -92,6 +88,7 @@ static int local_gva2gpa_common(struct acrn_vcpu *vcpu, const struct page_walk_i
 
 	addr = pw_info->top_entry;
 	i = pw_info->level;
+	stac();
 	while (i != 0U) {
 		i--;
 
@@ -212,6 +209,7 @@ static int local_gva2gpa_common(struct acrn_vcpu *vcpu, const struct page_walk_i
 	*gpa = entry | (gva & (page_size - 1UL));
 out:
 
+	clac();
 	if (fault != 0) {
 		ret = -EFAULT;
 		*err_code |= PAGE_FAULT_P_FLAG;
@@ -219,17 +217,17 @@ out:
 	return ret;
 }
 
-static int local_gva2gpa_pae(struct acrn_vcpu *vcpu, struct page_walk_info *pw_info,
+static int32_t local_gva2gpa_pae(struct acrn_vcpu *vcpu, struct page_walk_info *pw_info,
 	uint64_t gva, uint64_t *gpa, uint32_t *err_code)
 {
-	int index;
+	int32_t index;
 	uint64_t *base;
 	uint64_t entry;
 	uint64_t addr;
-	int ret;
+	int32_t ret;
 
 	addr = pw_info->top_entry & 0xFFFFFFF0U;
-	base = gpa2hva(vcpu->vm, addr);
+	base = (uint64_t *)gpa2hva(vcpu->vm, addr);
 	if (base == NULL) {
 		ret = -EFAULT;
 		goto out;
@@ -269,12 +267,12 @@ out:
  * - Return -EFAULT for paging fault, and refer to err_code for paging fault
  *   error code.
  */
-int gva2gpa(struct acrn_vcpu *vcpu, uint64_t gva, uint64_t *gpa,
+int32_t gva2gpa(struct acrn_vcpu *vcpu, uint64_t gva, uint64_t *gpa,
 	uint32_t *err_code)
 {
 	enum vm_paging_mode pm = get_vcpu_paging_mode(vcpu);
 	struct page_walk_info pw_info;
-	int ret = 0;
+	int32_t ret = 0;
 
 	if ((gpa == NULL) || (err_code == NULL)) {
 		return -EINVAL;
@@ -282,7 +280,7 @@ int gva2gpa(struct acrn_vcpu *vcpu, uint64_t gva, uint64_t *gpa,
 	*gpa = 0UL;
 
 	pw_info.top_entry = exec_vmread(VMX_GUEST_CR3);
-	pw_info.level = pm;
+	pw_info.level = (uint32_t)pm;
 	pw_info.is_write_access = ((*err_code & PAGE_FAULT_WR_FLAG) != 0U);
 	pw_info.is_inst_fetch = ((*err_code & PAGE_FAULT_ID_FLAG) != 0U);
 
@@ -351,16 +349,18 @@ static inline uint32_t local_copy_gpa(struct acrn_vm *vm, void *h_ptr, uint64_t 
 
 	g_ptr = hpa2hva(hpa);
 
+	stac();
 	if (cp_from_vm) {
 		(void)memcpy_s(h_ptr, len, g_ptr, len);
 	} else {
 		(void)memcpy_s(g_ptr, len, h_ptr, len);
 	}
+	clac();
 
 	return len;
 }
 
-static inline int copy_gpa(struct acrn_vm *vm, void *h_ptr_arg, uint64_t gpa_arg,
+static inline int32_t copy_gpa(struct acrn_vm *vm, void *h_ptr_arg, uint64_t gpa_arg,
 	uint32_t size_arg, bool cp_from_vm)
 {
 	void *h_ptr = h_ptr_arg;
@@ -385,7 +385,7 @@ static inline int copy_gpa(struct acrn_vm *vm, void *h_ptr_arg, uint64_t gpa_arg
 /*
  * @pre vcpu != NULL && err_code != NULL
  */
-static inline int copy_gva(struct acrn_vcpu *vcpu, void *h_ptr_arg, uint64_t gva_arg,
+static inline int32_t copy_gva(struct acrn_vcpu *vcpu, void *h_ptr_arg, uint64_t gva_arg,
 	uint32_t size_arg, uint32_t *err_code, uint64_t *fault_addr,
 	bool cp_from_vm)
 {
@@ -427,7 +427,7 @@ static inline int copy_gva(struct acrn_vcpu *vcpu, void *h_ptr_arg, uint64_t gva
  *   continuous
  * @pre Pointer vm is non-NULL
  */
-int copy_from_gpa(struct acrn_vm *vm, void *h_ptr, uint64_t gpa, uint32_t size)
+int32_t copy_from_gpa(struct acrn_vm *vm, void *h_ptr, uint64_t gpa, uint32_t size)
 {
 	return copy_gpa(vm, h_ptr, gpa, size, 1);
 }
@@ -438,214 +438,67 @@ int copy_from_gpa(struct acrn_vm *vm, void *h_ptr, uint64_t gpa, uint32_t size)
  *   continuous
  * @pre Pointer vm is non-NULL
  */
-int copy_to_gpa(struct acrn_vm *vm, void *h_ptr, uint64_t gpa, uint32_t size)
+int32_t copy_to_gpa(struct acrn_vm *vm, void *h_ptr, uint64_t gpa, uint32_t size)
 {
 	return copy_gpa(vm, h_ptr, gpa, size, 0);
 }
 
-int copy_from_gva(struct acrn_vcpu *vcpu, void *h_ptr, uint64_t gva,
+int32_t copy_from_gva(struct acrn_vcpu *vcpu, void *h_ptr, uint64_t gva,
 	uint32_t size, uint32_t *err_code, uint64_t *fault_addr)
 {
 	return copy_gva(vcpu, h_ptr, gva, size, err_code, fault_addr, 1);
 }
 
-int copy_to_gva(struct acrn_vcpu *vcpu, void *h_ptr, uint64_t gva,
+int32_t copy_to_gva(struct acrn_vcpu *vcpu, void *h_ptr, uint64_t gva,
 	uint32_t size, uint32_t *err_code, uint64_t *fault_addr)
 {
 	return copy_gva(vcpu, h_ptr, gva, size, err_code, fault_addr, 0);
 }
 
-void init_e820(void)
-{
-	uint32_t i;
-
-	if (boot_regs[0] == MULTIBOOT_INFO_MAGIC) {
-		struct multiboot_info *mbi = (struct multiboot_info *)
-			(hpa2hva((uint64_t)boot_regs[1]));
-
-		pr_info("Multiboot info detected\n");
-		if ((mbi->mi_flags & MULTIBOOT_INFO_HAS_MMAP) != 0U) {
-			struct multiboot_mmap *mmap =
-				(struct multiboot_mmap *)
-				hpa2hva((uint64_t)mbi->mi_mmap_addr);
-			e820_entries = mbi->mi_mmap_length/
-				sizeof(struct multiboot_mmap);
-			if (e820_entries > E820_MAX_ENTRIES) {
-				pr_err("Too many E820 entries %d\n",
-					e820_entries);
-				e820_entries = E820_MAX_ENTRIES;
-			}
-			dev_dbg(ACRN_DBG_GUEST,
-				"mmap length 0x%x addr 0x%x entries %d\n",
-				mbi->mi_mmap_length, mbi->mi_mmap_addr,
-				e820_entries);
-			for (i = 0U; i < e820_entries; i++) {
-				e820[i].baseaddr = mmap[i].baseaddr;
-				e820[i].length = mmap[i].length;
-				e820[i].type = mmap[i].type;
-
-				dev_dbg(ACRN_DBG_GUEST,
-					"mmap table: %d type: 0x%x\n",
-					i, mmap[i].type);
-				dev_dbg(ACRN_DBG_GUEST,
-					"Base: 0x%016llx length: 0x%016llx",
-					mmap[i].baseaddr, mmap[i].length);
-			}
-		}
-	} else {
-		ASSERT(false, "no multiboot info found");
-	}
-}
-
-
-void obtain_e820_mem_info(void)
-{
-	uint32_t i;
-	struct e820_entry *entry;
-
-	e820_mem.mem_bottom = UINT64_MAX;
-	e820_mem.mem_top = 0x0UL;
-	e820_mem.total_mem_size = 0UL;
-	e820_mem.max_ram_blk_base = 0UL;
-	e820_mem.max_ram_blk_size = 0UL;
-
-	for (i = 0U; i < e820_entries; i++) {
-		entry = &e820[i];
-		if (e820_mem.mem_bottom > entry->baseaddr) {
-			e820_mem.mem_bottom = entry->baseaddr;
-		}
-
-		if ((entry->baseaddr + entry->length)
-				> e820_mem.mem_top) {
-			e820_mem.mem_top = entry->baseaddr
-				+ entry->length;
-		}
-
-		if (entry->type == E820_TYPE_RAM) {
-			e820_mem.total_mem_size += entry->length;
-			if (entry->baseaddr == UOS_DEFAULT_START_ADDR) {
-				e820_mem.max_ram_blk_base =
-					entry->baseaddr;
-				e820_mem.max_ram_blk_size = entry->length;
-			}
-		}
-	}
-}
-
-static void rebuild_vm0_e820(void)
-{
-	uint32_t i;
-	uint64_t entry_start;
-	uint64_t entry_end;
-	uint64_t hv_start_pa = get_hv_image_base();
-	uint64_t hv_end_pa  = hv_start_pa + CONFIG_HV_RAM_SIZE;
-	struct e820_entry *entry, new_entry = {0};
-
-	/* hypervisor mem need be filter out from e820 table
-	 * it's hv itself + other hv reserved mem like vgt etc
-	 */
-	for (i = 0U; i < e820_entries; i++) {
-		entry = &e820[i];
-		entry_start = entry->baseaddr;
-		entry_end = entry->baseaddr + entry->length;
-
-		/* No need handle in these cases*/
-		if ((entry->type != E820_TYPE_RAM) || (entry_end <= hv_start_pa)
-				|| (entry_start >= hv_end_pa)) {
-			continue;
-		}
-
-		/* filter out hv mem and adjust length of this entry*/
-		if ((entry_start < hv_start_pa) && (entry_end <= hv_end_pa)) {
-			entry->length = hv_start_pa - entry_start;
-			continue;
-		}
-		/* filter out hv mem and need to create a new entry*/
-		if ((entry_start < hv_start_pa) && (entry_end > hv_end_pa)) {
-			entry->length = hv_start_pa - entry_start;
-			new_entry.baseaddr = hv_end_pa;
-			new_entry.length = entry_end - hv_end_pa;
-			new_entry.type = E820_TYPE_RAM;
-			continue;
-		}
-		/* This entry is within the range of hv mem
-		 * change to E820_TYPE_RESERVED
-		 */
-		if ((entry_start >= hv_start_pa) && (entry_end <= hv_end_pa)) {
-			entry->type = E820_TYPE_RESERVED;
-			continue;
-		}
-
-		if ((entry_start >= hv_start_pa) && (entry_start < hv_end_pa)
-				&& (entry_end > hv_end_pa)) {
-			entry->baseaddr = hv_end_pa;
-			entry->length = entry_end - hv_end_pa;
-			continue;
-		}
-
-	}
-
-	if (new_entry.length > 0UL) {
-		e820_entries++;
-		ASSERT(e820_entries <= E820_MAX_ENTRIES,
-				"e820 entry overflow");
-		entry = &e820[e820_entries - 1];
-		entry->baseaddr = new_entry.baseaddr;
-		entry->length = new_entry.length;
-		entry->type = new_entry.type;
-	}
-
-	e820_mem.total_mem_size -= CONFIG_HV_RAM_SIZE;
-}
-
 /**
  * @param[inout] vm pointer to a vm descriptor
  *
- * @return 0 - on success
+ * @retval 0 on success
  *
  * @pre vm != NULL
  * @pre is_vm0(vm) == true
  */
-int prepare_vm0_memmap_and_e820(struct acrn_vm *vm)
+void prepare_vm0_memmap(struct acrn_vm *vm)
 {
 	uint32_t i;
 	uint64_t attr_uc = (EPT_RWX | EPT_UNCACHED);
-	struct e820_entry *entry;
 	uint64_t hv_hpa;
 	uint64_t *pml4_page = (uint64_t *)vm->arch_vm.nworld_eptp;
 
-	rebuild_vm0_e820();
-	dev_dbg(ACRN_DBG_GUEST,
-		"vm0: bottom memory - 0x%llx, top memory - 0x%llx\n",
-		e820_mem.mem_bottom, e820_mem.mem_top);
+	const struct e820_entry *entry;
+	uint32_t entries_count = get_e820_entries_count();
+	const struct e820_entry *p_e820 = get_e820_entry();
+	const struct e820_mem_params *p_e820_mem_info = get_e820_mem_info();
 
-	if (e820_mem.mem_top > EPT_ADDRESS_SPACE(CONFIG_SOS_RAM_SIZE)) {
+	dev_dbg(ACRN_DBG_GUEST, "vm0: bottom memory - 0x%llx, top memory - 0x%llx\n",
+		p_e820_mem_info->mem_bottom, p_e820_mem_info->mem_top);
+
+	if (p_e820_mem_info->mem_top > EPT_ADDRESS_SPACE(CONFIG_SOS_RAM_SIZE)) {
 		panic("Please configure VM0_ADDRESS_SPACE correctly!\n");
 	}
 
 	/* create real ept map for all ranges with UC */
-	ept_mr_add(vm, pml4_page,
-			e820_mem.mem_bottom, e820_mem.mem_bottom,
-			(e820_mem.mem_top - e820_mem.mem_bottom),
-			attr_uc);
+	ept_mr_add(vm, pml4_page, p_e820_mem_info->mem_bottom, p_e820_mem_info->mem_bottom,
+			(p_e820_mem_info->mem_top - p_e820_mem_info->mem_bottom), attr_uc);
 
 	/* update ram entries to WB attr */
-	for (i = 0U; i < e820_entries; i++) {
-		entry = &e820[i];
+	for (i = 0U; i < entries_count; i++) {
+		entry = p_e820 + i;
 		if (entry->type == E820_TYPE_RAM) {
-			ept_mr_modify(vm, pml4_page,
-					entry->baseaddr, entry->length,
-					EPT_WB, EPT_MT_MASK);
+			ept_mr_modify(vm, pml4_page, entry->baseaddr, entry->length, EPT_WB, EPT_MT_MASK);
 		}
 	}
 
 	dev_dbg(ACRN_DBG_GUEST, "VM0 e820 layout:\n");
-	for (i = 0U; i < e820_entries; i++) {
-		entry = &e820[i];
-		dev_dbg(ACRN_DBG_GUEST,
-			"e820 table: %d type: 0x%x", i, entry->type);
-		dev_dbg(ACRN_DBG_GUEST,
-			"BaseAddress: 0x%016llx length: 0x%016llx\n",
+	for (i = 0U; i < entries_count; i++) {
+		entry = p_e820 + i;
+		dev_dbg(ACRN_DBG_GUEST, "e820 table: %d type: 0x%x", i, entry->type);
+		dev_dbg(ACRN_DBG_GUEST, "BaseAddress: 0x%016llx length: 0x%016llx\n",
 			entry->baseaddr, entry->length);
 	}
 
@@ -654,60 +507,4 @@ int prepare_vm0_memmap_and_e820(struct acrn_vm *vm)
 	 */
 	hv_hpa = get_hv_image_base();
 	ept_mr_del(vm, pml4_page, hv_hpa, CONFIG_HV_RAM_SIZE);
-	return 0;
-}
-
-uint64_t e820_alloc_low_memory(uint32_t size_arg)
-{
-	uint32_t i;
-	uint32_t size = size_arg;
-	struct e820_entry *entry, *new_entry;
-
-	/* We want memory in page boundary and integral multiple of pages */
-	size = (((size + CPU_PAGE_SIZE) - 1U) >> CPU_PAGE_SHIFT)
-		<< CPU_PAGE_SHIFT;
-
-	for (i = 0U; i < e820_entries; i++) {
-		entry = &e820[i];
-		uint64_t start, end, length;
-
-		start = round_page_up(entry->baseaddr);
-		end = round_page_down(entry->baseaddr + entry->length);
-		length = end - start;
-		length = (end > start) ? (end - start) : 0;
-
-		/* Search for available low memory */
-		if ((entry->type != E820_TYPE_RAM)
-			|| (length < size)
-			|| ((start + size) > MEM_1M)) {
-			continue;
-		}
-
-		/* found exact size of e820 entry */
-		if (length == size) {
-			entry->type = E820_TYPE_RESERVED;
-			e820_mem.total_mem_size -= size;
-			return start;
-		}
-
-		/*
-		 * found entry with available memory larger than requested
-		 * alocate memory from the end of this entry at page boundary
-		 */
-		new_entry = &e820[e820_entries];
-		new_entry->type = E820_TYPE_RESERVED;
-		new_entry->baseaddr = end - size;
-		new_entry->length = (entry->baseaddr +
-			entry->length) - new_entry->baseaddr;
-
-		/* Shrink the existing entry and total available memory */
-		entry->length -= new_entry->length;
-		e820_mem.total_mem_size -= new_entry->length;
-		e820_entries++;
-
-		return new_entry->baseaddr;
-	}
-
-	pr_fatal("Can't allocate memory under 1M from E820\n");
-	return ACRN_INVALID_HPA;
 }

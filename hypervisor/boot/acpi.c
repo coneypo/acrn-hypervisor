@@ -28,6 +28,7 @@
  */
 
 #include <hypervisor.h>
+#include "acpi_priv.h"
 #include "acpi.h"
 #include <vm0_boot.h>
 
@@ -102,11 +103,11 @@ struct acpi_madt_local_apic {
 static void *global_rsdp;
 
 static struct acpi_table_rsdp*
-biosacpi_search_rsdp(char *base, int length)
+biosacpi_search_rsdp(char *base, int32_t length)
 {
 	struct acpi_table_rsdp *rsdp;
 	uint8_t *cp, sum;
-	int ofs, idx;
+	int32_t ofs, idx;
 
 	/* search on 16-byte boundaries */
 	for (ofs = 0; ofs < length; ofs += 16) {
@@ -162,20 +163,22 @@ static void *get_rsdp(void)
 	return rsdp;
 }
 
-static int
-probe_table(uint64_t address, const char *sig)
+static bool probe_table(uint64_t address, const char *signature)
 {
 	void *va =  hpa2hva(address);
 	struct acpi_table_header *table = (struct acpi_table_header *)va;
+	bool ret;
 
-	if (strncmp(table->signature, sig, ACPI_NAME_SIZE) != 0) {
-		return 0;
+	if (strncmp(table->signature, signature, ACPI_NAME_SIZE) != 0) {
+	        ret = false;
+	} else {
+		ret = true;
 	}
 
-	return 1;
+	return ret;
 }
 
-static void *get_acpi_tbl(const char *sig)
+static void *get_acpi_tbl(const char *signature)
 {
 	struct acpi_table_rsdp *rsdp;
 	struct acpi_table_rsdt *rsdt;
@@ -198,7 +201,7 @@ static void *get_acpi_tbl(const char *sig)
 		    sizeof(uint64_t);
 
 		for (i = 0U; i < count; i++) {
-			if (probe_table(xsdt->table_offset_entry[i], sig) != 0) {
+			if (probe_table(xsdt->table_offset_entry[i], signature)) {
 				addr = xsdt->table_offset_entry[i];
 				break;
 			}
@@ -212,7 +215,7 @@ static void *get_acpi_tbl(const char *sig)
 			sizeof(uint32_t);
 
 		for (i = 0U; i < count; i++) {
-			if (probe_table(rsdt->table_offset_entry[i], sig) != 0) {
+			if (probe_table(rsdt->table_offset_entry[i], signature)) {
 				addr = rsdt->table_offset_entry[i];
 				break;
 			}
@@ -232,8 +235,7 @@ local_parse_madt(void *madt, uint32_t lapic_id_array[CONFIG_MAX_PCPU_NUM])
 	uint16_t pcpu_num = 0U;
 	struct acpi_madt_local_apic *processor;
 	struct acpi_table_madt *madt_ptr;
-	void *first;
-	void *end;
+	void *first, *end, *iterator;
 	struct acpi_subtable_header *entry;
 
 	madt_ptr = (struct acpi_table_madt *)madt;
@@ -241,13 +243,14 @@ local_parse_madt(void *madt, uint32_t lapic_id_array[CONFIG_MAX_PCPU_NUM])
 	first = madt_ptr + 1;
 	end = (char *)madt_ptr + madt_ptr->header.length;
 
-	for (entry = first; (void *)entry < end; ) {
+	for (iterator = first; (iterator) < (end); iterator += entry->length) {
+		entry = (struct acpi_subtable_header *)iterator;
 		if (entry->length < sizeof(struct acpi_subtable_header)) {
 			break;
 		}
 
 		if (entry->type == ACPI_MADT_TYPE_LOCAL_APIC) {
-			processor = (struct acpi_madt_local_apic *)entry;
+			processor = (struct acpi_madt_local_apic *)iterator;
 			if ((processor->lapic_flags & ACPI_MADT_ENABLED) != 0U) {
 				if (pcpu_num < CONFIG_MAX_PCPU_NUM) {
 					lapic_id_array[pcpu_num] = processor->id;
@@ -255,9 +258,6 @@ local_parse_madt(void *madt, uint32_t lapic_id_array[CONFIG_MAX_PCPU_NUM])
 				pcpu_num++;
 			}
 		}
-
-		entry = (struct acpi_subtable_header *)
-				(((uint64_t)entry) + entry->length);
 	}
 
 	return pcpu_num;
@@ -366,16 +366,10 @@ static void *get_facs_table(void)
 /* put all ACPI fix up code here */
 void acpi_fixup(void)
 {
-	uint8_t *facs_addr;
-
-	facs_addr = get_facs_table();
+	void *facs_addr = get_facs_table();
 
 	if (facs_addr != NULL) {
-		host_pm_s_state.wake_vector_32 =
-			(uint32_t *)(facs_addr + OFFSET_WAKE_VECTOR_32);
-		host_pm_s_state.wake_vector_64 =
-			(uint64_t *)(facs_addr + OFFSET_WAKE_VECTOR_64);
+		set_host_wake_vectors(facs_addr + OFFSET_WAKE_VECTOR_32, facs_addr + OFFSET_WAKE_VECTOR_64);
 	}
 }
-
 #endif

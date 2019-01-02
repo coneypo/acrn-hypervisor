@@ -25,6 +25,7 @@ static void fire_vhm_interrupt(void)
 	vlapic_intr_edge(vcpu, acrn_vhm_vector);
 }
 
+#if defined(HV_DEBUG)
 static void acrn_print_request(uint16_t vcpu_id, const struct vhm_request *req)
 {
 	switch (req->type) {
@@ -54,68 +55,27 @@ static void acrn_print_request(uint16_t vcpu_id, const struct vhm_request *req)
 		break;
 	}
 }
+#endif
 
 /**
  * @brief Reset all IO requests status of the VM
  *
  * @param vm The VM whose IO requests to be reset
  *
- * @return N/A
+ * @return None
  */
 void reset_vm_ioreqs(struct acrn_vm *vm)
 {
 	uint16_t i;
-	union vhm_request_buffer *req_buf;
 
-	req_buf = vm->sw.io_shared_page;
 	for (i = 0U; i < VHM_REQUEST_MAX; i++) {
-		req_buf->req_queue[i].valid = 0U;
-		atomic_store32(&req_buf->req_queue[i].processed, REQ_STATE_FREE);
+		set_vhm_req_state(vm, i, REQ_STATE_FREE);
 	}
 }
 
-static bool has_complete_ioreq(struct acrn_vcpu *vcpu)
+static inline bool has_complete_ioreq(const struct acrn_vcpu *vcpu)
 {
-	union vhm_request_buffer *req_buf = NULL;
-	struct vhm_request *vhm_req;
-	struct acrn_vm *vm;
-
-	vm = vcpu->vm;
-	req_buf = (union vhm_request_buffer *)vm->sw.io_shared_page;
-	if (req_buf != NULL) {
-		vhm_req = &req_buf->req_queue[vcpu->vcpu_id];
-		if (vhm_req->valid &&
-			atomic_load32(&vhm_req->processed)
-				== REQ_STATE_COMPLETE) {
-			return true;
-
-		}
-	}
-
-	return false;
-}
-
-/**
- * @brief Handle completed ioreq if any one pending
- *
- * @param pcpu_id The physical cpu id of vcpu whose IO request to be checked
- *
- * @return N/A
- */
-void handle_complete_ioreq(uint16_t pcpu_id)
-{
-	struct acrn_vcpu *vcpu = get_ever_run_vcpu(pcpu_id);
-	struct acrn_vm *vm;
-
-	if (vcpu != NULL) {
-		vm = vcpu->vm;
-		if (vm->sw.is_completion_polling) {
-			if (has_complete_ioreq(vcpu)) {
-				/* we have completed ioreq pending */
-				emulate_io_post(vcpu);
-			}
-		}
-	}
+	return (get_vhm_req_state(vcpu->vm, vcpu->vcpu_id) == REQ_STATE_COMPLETE);
 }
 
 /**
@@ -130,45 +90,105 @@ int32_t acrn_insert_request_wait(struct acrn_vcpu *vcpu, const struct io_request
 {
 	union vhm_request_buffer *req_buf = NULL;
 	struct vhm_request *vhm_req;
+	bool is_polling = false;
 	uint16_t cur;
 
 	if (vcpu->vm->sw.io_shared_page == NULL) {
 		return -EINVAL;
 	}
 
-	req_buf = (union vhm_request_buffer *)(vcpu->vm->sw.io_shared_page);
-	cur = vcpu->vcpu_id;
-	vhm_req = &req_buf->req_queue[cur];
-
-	ASSERT(atomic_load32(&vhm_req->processed) == REQ_STATE_FREE,
+	ASSERT(get_vhm_req_state(vcpu->vm, vcpu->vcpu_id) == REQ_STATE_FREE,
 		"VHM request buffer is busy");
 
+	req_buf = (union vhm_request_buffer *)(vcpu->vm->sw.io_shared_page);
+	cur = vcpu->vcpu_id;
+
+	stac();
+	vhm_req = &req_buf->req_queue[cur];
 	/* ACRN insert request to VHM and inject upcall */
 	vhm_req->type = io_req->type;
 	(void)memcpy_s(&vhm_req->reqs, sizeof(union vhm_io_request),
 		&io_req->reqs, sizeof(union vhm_io_request));
 	if (vcpu->vm->sw.is_completion_polling) {
 		vhm_req->completion_polling = 1U;
+		is_polling = true;
 	}
+	clac();
 
-	/* pause vcpu, wait for VHM to handle the MMIO request.
+	/* pause vcpu in notification mode , wait for VHM to handle the MMIO request.
 	 * TODO: when pause_vcpu changed to switch vcpu out directlly, we
-	 * should fix the race issue between req.valid = true and vcpu pause
+	 * should fix the race issue between req.processed update and vcpu pause
 	 */
-	pause_vcpu(vcpu, VCPU_PAUSED);
+	if (!is_polling) {
+		pause_vcpu(vcpu, VCPU_PAUSED);
+	}
 
 	/* Must clear the signal before we mark req as pending
 	 * Once we mark it pending, VHM may process req and signal us
 	 * before we perform upcall.
 	 * because VHM can work in pulling mode without wait for upcall
 	 */
-	vhm_req->valid = 1;
-	atomic_store32(&vhm_req->processed, REQ_STATE_PENDING);
+	set_vhm_req_state(vcpu->vm, vcpu->vcpu_id, REQ_STATE_PENDING);
 
+#if defined(HV_DEBUG)
+	stac();
 	acrn_print_request(vcpu->vcpu_id, vhm_req);
+	clac();
+#endif
 
 	/* signal VHM */
 	fire_vhm_interrupt();
 
+	/* Polling completion of the request in polling mode */
+	if (is_polling) {
+		/*
+		 * Now, we only have one case that will schedule out this vcpu
+		 * from IO completion polling status, it's pause_vcpu to VCPU_ZOMBIE.
+		 * In this case, we cannot come back to polling status again. Currently,
+		 * it's OK as we needn't handle IO completion in zombie status.
+		 */
+		while (!need_reschedule(vcpu->pcpu_id)) {
+			if (has_complete_ioreq(vcpu)) {
+				/* we have completed ioreq pending */
+				emulate_io_post(vcpu);
+				break;
+			}
+			asm_pause();
+		}
+	}
+
 	return 0;
+}
+
+uint32_t get_vhm_req_state(struct acrn_vm *vm, uint16_t vhm_req_id)
+{
+	uint32_t state;
+	union vhm_request_buffer *req_buf = NULL;
+	struct vhm_request *vhm_req;
+
+	req_buf = (union vhm_request_buffer *)vm->sw.io_shared_page;
+	if (req_buf == NULL) {
+	        state =  0xffffffffU;
+	} else {
+		stac();
+		vhm_req = &req_buf->req_queue[vhm_req_id];
+		state = atomic_load32(&vhm_req->processed);
+		clac();
+	}
+
+	return state;
+}
+
+void set_vhm_req_state(struct acrn_vm *vm, uint16_t vhm_req_id, uint32_t state)
+{
+	union vhm_request_buffer *req_buf = NULL;
+	struct vhm_request *vhm_req;
+
+	req_buf = (union vhm_request_buffer *)vm->sw.io_shared_page;
+	if (req_buf != NULL) {
+		stac();
+		vhm_req = &req_buf->req_queue[vhm_req_id];
+		atomic_store32(&vhm_req->processed, state);
+		clac();
+	}
 }

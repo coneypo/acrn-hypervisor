@@ -108,7 +108,7 @@ struct profiling_vcpu_pcpu_map {
 
 struct profiling_vm_info {
 	int32_t		vm_id_num;
-	unsigned char	guid[16];
+	uint8_t	guid[16];
 	char		vm_name[16];
 	int32_t		num_vcpus;
 	struct profiling_vcpu_pcpu_map	cpu_map[MAX_NR_VCPUS];
@@ -291,6 +291,7 @@ struct profiling_info_wrapper {
 	struct vm_switch_trace	vm_switch_trace;
 	socwatch_state			soc_state;
 	struct sw_msr_op_info	sw_msr_op_info;
+	spinlock_t		sw_lock;
 } __aligned(8);
 
 int32_t profiling_get_version_info(struct acrn_vm *vm, uint64_t addr);

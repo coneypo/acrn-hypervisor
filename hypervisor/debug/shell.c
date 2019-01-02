@@ -5,13 +5,14 @@
  */
 
 #include <hypervisor.h>
+#include <ioapic.h>
 #include "shell_priv.h"
 
 #define TEMP_STR_SIZE		60U
 #define MAX_STR_SIZE		256U
 #define SHELL_PROMPT_STR	"ACRN:\\>"
 
-#define SHELL_LOG_BUF_SIZE		(CPU_PAGE_SIZE * CONFIG_MAX_PCPU_NUM / 2U)
+#define SHELL_LOG_BUF_SIZE		(PAGE_SIZE * CONFIG_MAX_PCPU_NUM / 2U)
 static char shell_log_buf[SHELL_LOG_BUF_SIZE];
 
 /* Input Line Other - Switch to the "other" input line (there are only two
@@ -19,20 +20,19 @@ static char shell_log_buf[SHELL_LOG_BUF_SIZE];
  */
 #define SHELL_INPUT_LINE_OTHER(v)	(((v) + 1U) & 0x1U)
 
-static int shell_cmd_help(__unused int argc, __unused char **argv);
-static int shell_list_vm(__unused int argc, __unused char **argv);
-static int shell_list_vcpu(__unused int argc, __unused char **argv);
-static int shell_vcpu_dumpreg(int argc, char **argv);
-static int shell_dumpmem(int argc, char **argv);
-static int shell_to_sos_console(int argc, char **argv);
-static int shell_show_cpu_int(__unused int argc, __unused char **argv);
-static int shell_show_ptdev_info(__unused int argc, __unused char **argv);
-static int shell_show_vioapic_info(int argc, char **argv);
-static int shell_show_ioapic_info(__unused int argc, __unused char **argv);
-static int shell_dump_logbuf(int argc, char **argv);
-static int shell_loglevel(int argc, char **argv);
-static int shell_cpuid(int argc, char **argv);
-static int shell_trigger_crash(int argc, char **argv);
+static int32_t shell_cmd_help(__unused int32_t argc, __unused char **argv);
+static int32_t shell_list_vm(__unused int32_t argc, __unused char **argv);
+static int32_t shell_list_vcpu(__unused int32_t argc, __unused char **argv);
+static int32_t shell_vcpu_dumpreg(int32_t argc, char **argv);
+static int32_t shell_dumpmem(int32_t argc, char **argv);
+static int32_t shell_to_sos_console(int32_t argc, char **argv);
+static int32_t shell_show_cpu_int(__unused int32_t argc, __unused char **argv);
+static int32_t shell_show_ptdev_info(__unused int32_t argc, __unused char **argv);
+static int32_t shell_show_vioapic_info(int32_t argc, char **argv);
+static int32_t shell_show_ioapic_info(__unused int32_t argc, __unused char **argv);
+static int32_t shell_loglevel(int32_t argc, char **argv);
+static int32_t shell_cpuid(int32_t argc, char **argv);
+static int32_t shell_trigger_crash(int32_t argc, char **argv);
 
 static struct shell_cmd shell_cmds[] = {
 	{
@@ -96,12 +96,6 @@ static struct shell_cmd shell_cmds[] = {
 		.fcn		= shell_show_ioapic_info,
 	},
 	{
-		.str		= SHELL_CMD_LOGDUMP,
-		.cmd_param	= SHELL_CMD_LOGDUMP_PARAM,
-		.help_str	= SHELL_CMD_LOGDUMP_HELP,
-		.fcn		= shell_dump_logbuf,
-	},
-	{
 		.str		= SHELL_CMD_LOG_LVL,
 		.cmd_param	= SHELL_CMD_LOG_LVL_PARAM,
 		.help_str	= SHELL_CMD_LOG_LVL_HELP,
@@ -129,7 +123,7 @@ uint16_t npk_loglevel = CONFIG_NPK_LOGLEVEL_DEFAULT;
 static struct shell hv_shell;
 static struct shell *p_shell = &hv_shell;
 
-static int string_to_argv(char *argv_str, void *p_argv_mem,
+static int32_t string_to_argv(char *argv_str, void *p_argv_mem,
 		__unused uint32_t argv_mem_size,
 		uint32_t *p_argc, char ***p_argv)
 {
@@ -323,19 +317,19 @@ static bool shell_input_line(void)
 	return done;
 }
 
-static int shell_process_cmd(const char *p_input_line)
+static int32_t shell_process_cmd(const char *p_input_line)
 {
-	int status = -EINVAL;
+	int32_t status = -EINVAL;
 	struct shell_cmd *p_cmd;
 	char cmd_argv_str[SHELL_CMD_MAX_LEN + 1U];
-	int cmd_argv_mem[sizeof(char *) * ((SHELL_CMD_MAX_LEN + 1U) >> 1U)];
-	int cmd_argc;
+	int32_t cmd_argv_mem[sizeof(char *) * ((SHELL_CMD_MAX_LEN + 1U) >> 1U)];
+	int32_t cmd_argc;
 	char **cmd_argv;
 
 	/* Copy the input line INTo an argument string to become part of the
 	 * argument vector.
 	 */
-	(void)strcpy_s(&cmd_argv_str[0], SHELL_CMD_MAX_LEN, p_input_line);
+	(void)strncpy_s(&cmd_argv_str[0], SHELL_CMD_MAX_LEN, p_input_line, SHELL_CMD_MAX_LEN);
 	cmd_argv_str[SHELL_CMD_MAX_LEN] = 0;
 
 	/* Build the argv vector from the string. The first argument in the
@@ -368,9 +362,9 @@ static int shell_process_cmd(const char *p_input_line)
 	return status;
 }
 
-static int shell_process(void)
+static int32_t shell_process(void)
 {
-	int status;
+	int32_t status;
 	char *p_input_line;
 
 	/* Check for the repeat command character in active input line.
@@ -442,7 +436,7 @@ void shell_init(void)
 
 #define SHELL_ROWS	10
 #define MAX_INDENT_LEN	16U
-static int shell_cmd_help(__unused int argc, __unused char **argv)
+static int32_t shell_cmd_help(__unused int32_t argc, __unused char **argv)
 {
 	uint16_t spaces;
 	struct shell_cmd *p_cmd = NULL;
@@ -515,7 +509,7 @@ static int shell_cmd_help(__unused int argc, __unused char **argv)
 	return 0;
 }
 
-static int shell_list_vm(__unused int argc, __unused char **argv)
+static int32_t shell_list_vm(__unused int32_t argc, __unused char **argv)
 {
 	char temp_str[MAX_STR_SIZE];
 	struct acrn_vm *vm;
@@ -532,16 +526,16 @@ static int shell_list_vm(__unused int argc, __unused char **argv)
 		}
 		switch (vm->state) {
 		case VM_CREATED:
-			(void)strcpy_s(state, 32U, "Created");
+			(void)strncpy_s(state, 32U, "Created", 32U);
 			break;
 		case VM_STARTED:
-			(void)strcpy_s(state, 32U, "Started");
+			(void)strncpy_s(state, 32U, "Started", 32U);
 			break;
 		case VM_PAUSED:
-			(void)strcpy_s(state, 32U, "Paused");
+			(void)strncpy_s(state, 32U, "Paused", 32U);
 			break;
 		default:
-			(void)strcpy_s(state, 32U, "Unknown");
+			(void)strncpy_s(state, 32U, "Unknown", 32U);
 			break;
 		}
 		/* Create output string consisting of VM name and VM id
@@ -557,7 +551,7 @@ static int shell_list_vm(__unused int argc, __unused char **argv)
 	return 0;
 }
 
-static int shell_list_vcpu(__unused int argc, __unused char **argv)
+static int32_t shell_list_vcpu(__unused int32_t argc, __unused char **argv)
 {
 	char temp_str[MAX_STR_SIZE];
 	struct acrn_vm *vm;
@@ -577,19 +571,19 @@ static int shell_list_vcpu(__unused int argc, __unused char **argv)
 		foreach_vcpu(i, vm, vcpu) {
 			switch (vcpu->state) {
 			case VCPU_INIT:
-				(void)strcpy_s(state, 32U, "Init");
+				(void)strncpy_s(state, 32U, "Init", 32U);
 				break;
 			case VCPU_PAUSED:
-				(void)strcpy_s(state, 32U, "Paused");
+				(void)strncpy_s(state, 32U, "Paused", 32U);
 				break;
 			case VCPU_RUNNING:
-				(void)strcpy_s(state, 32U, "Running");
+				(void)strncpy_s(state, 32U, "Running", 32U);
 				break;
 			case VCPU_ZOMBIE:
-				(void)strcpy_s(state, 32U, "Zombie");
+				(void)strncpy_s(state, 32U, "Zombie", 32U);
 				break;
 			default:
-				(void)strcpy_s(state, 32U, "Unknown");
+				(void)strncpy_s(state, 32U, "Unknown", 32U);
 			}
 			/* Create output string consisting of VM name
 			 * and VM id
@@ -614,7 +608,7 @@ static int shell_list_vcpu(__unused int argc, __unused char **argv)
 /* the input 'data' must != NULL and indicate a vcpu structure pointer */
 static void vcpu_dumpreg(void *data)
 {
-	int status;
+	int32_t status;
 	uint64_t i, fault_addr, tmp[DUMPREG_SP_SIZE];
 	uint32_t err_code = 0;
 	struct vcpu_dump *dump = data;
@@ -696,9 +690,9 @@ overflow:
 	printf("buffer size could not be enough! please check!\n");
 }
 
-static int shell_vcpu_dumpreg(int argc, char **argv)
+static int32_t shell_vcpu_dumpreg(int32_t argc, char **argv)
 {
-	int status = 0;
+	int32_t status = 0;
 	uint16_t vm_id;
 	uint16_t vcpu_id;
 	struct acrn_vm *vm;
@@ -713,12 +707,12 @@ static int shell_vcpu_dumpreg(int argc, char **argv)
 		goto out;
 	}
 
-	status = atoi(argv[1]);
+	status = strtol_deci(argv[1]);
 	if (status < 0) {
 		goto out;
 	}
 	vm_id = (uint16_t)status;
-	vcpu_id = (uint16_t)atoi(argv[2]);
+	vcpu_id = (uint16_t)strtol_deci(argv[2]);
 
 	vm = get_vm_from_vmid(vm_id);
 	if (vm == NULL) {
@@ -751,7 +745,7 @@ out:
 }
 
 #define MAX_MEMDUMP_LEN		(32U * 8U)
-static int shell_dumpmem(int argc, char **argv)
+static int32_t shell_dumpmem(int32_t argc, char **argv)
 {
 	uint64_t addr;
 	uint64_t *ptr;
@@ -764,7 +758,7 @@ static int shell_dumpmem(int argc, char **argv)
 	}
 
 	addr = strtoul_hex(argv[1]);
-	length = (uint32_t)atoi(argv[2]);
+	length = (uint32_t)strtol_deci(argv[2]);
 	if (length > MAX_MEMDUMP_LEN) {
 		shell_puts("over max length, round back\r\n");
 		length = MAX_MEMDUMP_LEN;
@@ -795,7 +789,7 @@ static int shell_dumpmem(int argc, char **argv)
 	return 0;
 }
 
-static int shell_to_sos_console(__unused int argc, __unused char **argv)
+static int32_t shell_to_sos_console(__unused int32_t argc, __unused char **argv)
 {
 	char temp_str[TEMP_STR_SIZE];
 	uint16_t guest_no = 0U;
@@ -806,7 +800,7 @@ static int shell_to_sos_console(__unused int argc, __unused char **argv)
 	struct vm_description *vm_desc;
 
 	if (argc == 2U) {
-		guest_no = atoi(argv[1]);
+		guest_no = strtol_deci(argv[1]);
 	}
 
 	vuart_vmid = guest_no;
@@ -855,6 +849,7 @@ static void get_cpu_interrupt_info(char *str_arg, size_t str_max)
 	uint16_t pcpu_id;
 	uint32_t irq, vector;
 	size_t len, size = str_max;
+	uint16_t pcpu_nums = get_pcpu_nums();
 
 	len = snprintf(str, size, "\r\nIRQ\tVECTOR");
 	if (len >= size) {
@@ -863,7 +858,7 @@ static void get_cpu_interrupt_info(char *str_arg, size_t str_max)
 	size -= len;
 	str += len;
 
-	for (pcpu_id = 0U; pcpu_id < phys_cpu_num; pcpu_id++) {
+	for (pcpu_id = 0U; pcpu_id < pcpu_nums; pcpu_id++) {
 		len = snprintf(str, size, "\tCPU%d", pcpu_id);
 		if (len >= size) {
 			goto overflow;
@@ -884,7 +879,7 @@ static void get_cpu_interrupt_info(char *str_arg, size_t str_max)
 			size -= len;
 			str += len;
 
-			for (pcpu_id = 0U; pcpu_id < phys_cpu_num; pcpu_id++) {
+			for (pcpu_id = 0U; pcpu_id < pcpu_nums; pcpu_id++) {
 				len = snprintf(str, size, "\t%d", per_cpu(irq_count, pcpu_id)[irq]);
 				if (len >= size) {
 					goto overflow;
@@ -901,7 +896,7 @@ overflow:
 	printf("buffer size could not be enough! please check!\n");
 }
 
-static int shell_show_cpu_int(__unused int argc, __unused char **argv)
+static int32_t shell_show_cpu_int(__unused int32_t argc, __unused char **argv)
 {
 	get_cpu_interrupt_info(shell_log_buf, SHELL_LOG_BUF_SIZE);
 	shell_puts(shell_log_buf);
@@ -909,14 +904,14 @@ static int shell_show_cpu_int(__unused int argc, __unused char **argv)
 }
 
 #define PTDEV_INVALID_PIN 0xffU
-static void get_entry_info(const struct ptdev_remapping_info *entry, char *type,
+static void get_entry_info(const struct ptirq_remapping_info *entry, char *type,
 		uint32_t *irq, uint32_t *vector, uint64_t *dest, bool *lvl_tm,
 		uint8_t *pin, uint8_t *vpin, uint32_t *bdf, uint32_t *vbdf)
 {
 	if (is_entry_active(entry)) {
 		if (entry->intr_type == PTDEV_INTR_MSI) {
-			(void)strcpy_s(type, 16U, "MSI");
-			*dest = (entry->msi.pmsi_addr & 0xFF000U) >> CPU_PAGE_SHIFT;
+			(void)strncpy_s(type, 16U, "MSI", 16U);
+			*dest = (entry->msi.pmsi_addr & 0xFF000U) >> PAGE_SHIFT;
 			if ((entry->msi.pmsi_data & APIC_TRIGMOD_LEVEL) != 0U) {
 				*lvl_tm = true;
 			} else {
@@ -931,9 +926,9 @@ static void get_entry_info(const struct ptdev_remapping_info *entry, char *type,
 			union ioapic_rte rte;
 
 			if (entry->virt_sid.intx_id.src == PTDEV_VPIN_IOAPIC) {
-				(void)strcpy_s(type, 16U, "IOAPIC");
+				(void)strncpy_s(type, 16U, "IOAPIC", 16U);
 			} else {
-				(void)strcpy_s(type, 16U, "PIC");
+				(void)strncpy_s(type, 16U, "PIC", 16U);
 			}
 			ioapic_get_rte(phys_irq, &rte);
 			*dest = rte.full >> IOAPIC_RTE_DEST_SHIFT;
@@ -950,7 +945,7 @@ static void get_entry_info(const struct ptdev_remapping_info *entry, char *type,
 		*irq = entry->allocated_pirq;
 		*vector = irq_to_vector(entry->allocated_pirq);
 	} else {
-		(void)strcpy_s(type, 16U, "NONE");
+		(void)strncpy_s(type, 16U, "NONE", 16U);
 		*irq = IRQ_INVALID;
 		*vector = 0U;
 		*dest = 0UL;
@@ -965,7 +960,7 @@ static void get_entry_info(const struct ptdev_remapping_info *entry, char *type,
 static void get_ptdev_info(char *str_arg, size_t str_max)
 {
 	char *str = str_arg;
-	struct ptdev_remapping_info *entry;
+	struct ptirq_remapping_info *entry;
 	uint16_t idx;
 	size_t len, size = str_max;
 	uint32_t irq, vector;
@@ -983,7 +978,7 @@ static void get_ptdev_info(char *str_arg, size_t str_max)
 	str += len;
 
 	for (idx = 0U; idx < CONFIG_MAX_PT_IRQ_ENTRIES; idx++) {
-		entry = &ptdev_irq_entries[idx];
+		entry = &ptirq_entries[idx];
 		if (is_entry_active(entry)) {
 			get_entry_info(entry, type, &irq, &vector,
 					&dest, &lvl_tm, &pin, &vpin,
@@ -1017,7 +1012,7 @@ overflow:
 	printf("buffer size could not be enough! please check!\n");
 }
 
-static int shell_show_ptdev_info(__unused int argc, __unused char **argv)
+static int32_t shell_show_ptdev_info(__unused int32_t argc, __unused char **argv)
 {
 	get_ptdev_info(shell_log_buf, SHELL_LOG_BUF_SIZE);
 	shell_puts(shell_log_buf);
@@ -1081,7 +1076,7 @@ overflow:
 	printf("buffer size could not be enough! please check!\n");
 }
 
-static int shell_show_vioapic_info(int argc, char **argv)
+static int32_t shell_show_vioapic_info(int32_t argc, char **argv)
 {
 	uint16_t vmid;
 	int32_t ret;
@@ -1090,7 +1085,7 @@ static int shell_show_vioapic_info(int argc, char **argv)
 	if (argc != 2) {
 		return -EINVAL;
 	}
-	ret = atoi(argv[1]);
+	ret = strtol_deci(argv[1]);
 	if (ret >= 0) {
 		vmid = (uint16_t) ret;
 		get_vioapic_info(shell_log_buf, SHELL_LOG_BUF_SIZE, vmid);
@@ -1122,11 +1117,12 @@ static void get_rte_info(union ioapic_rte rte, bool *mask, bool *irr,
  *				interrupt info
  * @param[inout]	str_arg	Pointer to the output information
  */
-static int get_ioapic_info(char *str_arg, size_t str_max_len)
+static int32_t get_ioapic_info(char *str_arg, size_t str_max_len)
 {
 	char *str = str_arg;
 	uint32_t irq;
 	size_t len, size = str_max_len;
+	uint32_t ioapic_nr_gsi = 0U;
 
 	len = snprintf(str, size, "\r\nIRQ\tPIN\tRTE.HI32\tRTE.LO32\tVEC\tDST\tDM\tTM\tDELM\tIRR\tMASK");
 	if (len >= size) {
@@ -1135,13 +1131,19 @@ static int get_ioapic_info(char *str_arg, size_t str_max_len)
 	size -= len;
 	str += len;
 
-	for (irq = 0U; irq < nr_gsi; irq++) {
-		void *addr = gsi_table[irq].addr;
-		uint8_t pin = gsi_table[irq].pin;
+	ioapic_nr_gsi = ioapic_get_nr_gsi ();
+	for (irq = 0U; irq < ioapic_nr_gsi; irq++) {
+		void *addr = ioapic_get_gsi_irq_addr (irq);
+		uint8_t pin = ioapic_irq_to_pin (irq);
 		union ioapic_rte rte;
 
 		bool irr, phys, level, mask;
 		uint32_t delmode, vector, dest;
+
+		/* Add NULL check for addr, INVALID_PIN check for pin */
+		if ((addr == NULL) || (!ioapic_is_pin_valid(pin))) {
+			goto overflow;
+		}
 
 		ioapic_get_rte_entry(addr, pin, &rte);
 
@@ -1171,9 +1173,9 @@ overflow:
 	return 0;
 }
 
-static int shell_show_ioapic_info(__unused int argc, __unused char **argv)
+static int32_t shell_show_ioapic_info(__unused int32_t argc, __unused char **argv)
 {
-	int err = 0;
+	int32_t err = 0;
 
 	err = get_ioapic_info(shell_log_buf, SHELL_LOG_BUF_SIZE);
 	shell_puts(shell_log_buf);
@@ -1181,36 +1183,19 @@ static int shell_show_ioapic_info(__unused int argc, __unused char **argv)
 	return err;
 }
 
-static int shell_dump_logbuf(int argc, char **argv)
-{
-	uint16_t pcpu_id;
-	int val;
-
-	if (argc == 2) {
-		val = atoi(argv[1]);
-		if (val >= 0) {
-			pcpu_id = (uint16_t)val;
-			print_logmsg_buffer(pcpu_id);
-			return 0;
-		}
-	}
-
-	return -EINVAL;
-}
-
-static int shell_loglevel(int argc, char **argv)
+static int32_t shell_loglevel(int32_t argc, char **argv)
 {
 	char str[MAX_STR_SIZE] = {0};
 
 	switch (argc) {
 	case 4:
-		npk_loglevel = (uint16_t)atoi(argv[3]);
+		npk_loglevel = (uint16_t)strtol_deci(argv[3]);
 		/* falls through */
 	case 3:
-		mem_loglevel = (uint16_t)atoi(argv[2]);
+		mem_loglevel = (uint16_t)strtol_deci(argv[2]);
 		/* falls through */
 	case 2:
-		console_loglevel = (uint16_t)atoi(argv[1]);
+		console_loglevel = (uint16_t)strtol_deci(argv[1]);
 		break;
 	case 1:
 		snprintf(str, MAX_STR_SIZE, "console_loglevel: %u, "
@@ -1225,7 +1210,7 @@ static int shell_loglevel(int argc, char **argv)
 	return 0;
 }
 
-static int shell_cpuid(int argc, char **argv)
+static int32_t shell_cpuid(int32_t argc, char **argv)
 {
 	char str[MAX_STR_SIZE] = {0};
 	uint32_t leaf, subleaf = 0;
@@ -1252,7 +1237,7 @@ static int shell_cpuid(int argc, char **argv)
 	return 0;
 }
 
-static int shell_trigger_crash(int argc, char **argv)
+static int32_t shell_trigger_crash(int32_t argc, char **argv)
 {
 	char str[MAX_STR_SIZE] = {0};
 

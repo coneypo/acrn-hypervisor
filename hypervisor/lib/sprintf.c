@@ -86,7 +86,7 @@ static const char *get_param(const char *s_arg, uint32_t *x)
 	/* parse uint32_teger */
 	while ((*s >= '0') && (*s <= '9')) {
 		char delta = *s - '0';
-		*x = *x * 10U + (uint32_t)delta;
+		*x = ((*x) * 10U) + (uint32_t)delta;
 		s++;
 	}
 
@@ -97,7 +97,7 @@ static const char *get_flags(const char *s_arg, uint32_t *flags)
 {
 	const char *s = s_arg;
 	/* contains the flag characters */
-	static const char flagchars[] = "#0- +";
+	static const char flagchars[5] = "#0- +";
 	/* contains the numeric flags for the characters above */
 	static const uint32_t fl[sizeof(flagchars)] = {
 		PRINT_FLAG_ALTERNATE_FORM,	/* # */
@@ -252,7 +252,7 @@ static void print_pow2(struct print_param *param,
 		uint64_t v_arg, uint32_t shift)
 {
 	uint64_t v = v_arg;
-	/* max buffer required for octal representation of unsigned long long */
+	/* max buffer required for octal representation of uint64_t long */
 	char digitbuff[22];
 	/* Insert position for the next character+1 */
 	char *pos = digitbuff + sizeof(digitbuff);
@@ -267,8 +267,7 @@ static void print_pow2(struct print_param *param,
 	mask = (1UL << shift) - 1UL;
 
 	/* determine digit translation table */
-	digits = ((param->vars.flags & PRINT_FLAG_UPPER) != 0U) ?
-			&upper_hex_digits : &lower_hex_digits;
+	digits = ((param->vars.flags & PRINT_FLAG_UPPER) != 0U) ? &upper_hex_digits : &lower_hex_digits;
 
 	/* apply mask for short/char */
 	v &= param->vars.mask;
@@ -306,7 +305,7 @@ static void print_pow2(struct print_param *param,
 
 static void print_decimal(struct print_param *param, int64_t value)
 {
-	/* max. required buffer for unsigned long long in decimal format */
+	/* max. required buffer for uint64_t long in decimal format */
 	char digitbuff[20];
 	/* pointer to the next character position (+1) */
 	char *pos = digitbuff + sizeof(digitbuff);
@@ -349,17 +348,17 @@ static void print_decimal(struct print_param *param, int64_t value)
 		v.qword = v.qword / 10UL;
 	}
 
+	nv.dwords.low = v.dwords.low;
 	/* process 32 bit (or reduced 64 bit) value */
 	do {
 		/* determine digits from right to left. The compiler should be
 		 * able to handle a division and multiplication by the constant
 		 * 10.
 		 */
-		nv.dwords.low = v.dwords.low / 10U;
 		pos--;
-		*pos = (v.dwords.low - (10U * nv.dwords.low)) + '0';
-		v.dwords.low = nv.dwords.low;
-	} while (v.dwords.low != 0U);
+		*pos = (char)(nv.dwords.low % 10U) + '0';
+		nv.dwords.low = nv.dwords.low / 10U;
+	} while (nv.dwords.low != 0U);
 
 	/* assign parameter and apply width and precision */
 	param->vars.value = pos;
@@ -567,7 +566,7 @@ charmem(size_t cmd, const char *s_arg, uint32_t sz, struct snprint_param *param)
 	}
 	/* fill mode */
 	else {
-		n = (sz < param->sz - param->wrtn) ? sz : 0U;
+		n = (sz < (param->sz - param->wrtn)) ? sz : 0U;
 		param->wrtn += sz;
 		(void)memset(p, (uint8_t)*s, n);
 	}

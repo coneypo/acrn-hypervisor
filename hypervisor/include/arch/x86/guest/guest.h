@@ -28,15 +28,6 @@
 		(idx)++, vcpu = &(vm->hw.vcpu_array[(idx)])) \
 		if (vcpu->state != VCPU_OFFLINE)
 
-/* the index is matched with emulated msrs array*/
-#define IDX_TSC_DEADLINE		0U
-#define IDX_BIOS_UPDT_TRIG		(IDX_TSC_DEADLINE + 1U)
-#define IDX_BIOS_SIGN_ID		(IDX_BIOS_UPDT_TRIG + 1U)
-#define IDX_TSC		(IDX_BIOS_SIGN_ID + 1U)
-#define IDX_PAT		(IDX_TSC + 1U)
-#define IDX_APIC_BASE	(IDX_PAT + 1U)
-#define IDX_MAX_MSR	(IDX_APIC_BASE + 1U)
-
 /*
  * VCPU related APIs
  */
@@ -79,16 +70,7 @@
 #define LDTR_AR                         (0x0082U) /* LDT, type must be 2, refer to SDM Vol3 26.3.1.2 */
 #define TR_AR                           (0x008bU) /* TSS (busy), refer to SDM Vol3 26.3.1.2 */
 
-struct e820_mem_params {
-	uint64_t mem_bottom;
-	uint64_t mem_top;
-	uint64_t total_mem_size;
-	uint64_t max_ram_blk_base; /* used for the start address of UOS */
-	uint64_t max_ram_blk_size;
-};
-
-int prepare_vm0_memmap_and_e820(struct acrn_vm *vm);
-uint64_t e820_alloc_low_memory(uint32_t size_arg);
+void prepare_vm0_memmap(struct acrn_vm *vm);
 
 /* Definition for a mem map lookup */
 struct vm_lu_mem_map {
@@ -112,39 +94,25 @@ enum vm_paging_mode {
  */
 uint64_t vcpumask2pcpumask(struct acrn_vm *vm, uint64_t vdmask);
 
-int gva2gpa(struct acrn_vcpu *vcpu, uint64_t gva, uint64_t *gpa, uint32_t *err_code);
+int32_t gva2gpa(struct acrn_vcpu *vcpu, uint64_t gva, uint64_t *gpa, uint32_t *err_code);
 
 enum vm_paging_mode get_vcpu_paging_mode(struct acrn_vcpu *vcpu);
 
-void init_e820(void);
-void obtain_e820_mem_info(void);
-extern uint32_t e820_entries;
-extern struct e820_entry e820[E820_MAX_ENTRIES];
-
-#ifdef CONFIG_PARTITION_MODE
-/*
- * Default e820 mem map:
- *
- * Assumption is every VM launched by ACRN in partition mode uses 2G of RAM.
- * there is reserved memory of 64K for MPtable and PCI hole of 512MB
- */
-#define NUM_E820_ENTRIES        5U
-extern const struct e820_entry e820_default_entries[NUM_E820_ENTRIES];
-#endif
-
-extern uint32_t boot_regs[2];
-extern struct e820_mem_params e820_mem;
-
-int rdmsr_vmexit_handler(struct acrn_vcpu *vcpu);
-int wrmsr_vmexit_handler(struct acrn_vcpu *vcpu);
+int32_t rdmsr_vmexit_handler(struct acrn_vcpu *vcpu);
+int32_t wrmsr_vmexit_handler(struct acrn_vcpu *vcpu);
 void init_msr_emulation(struct acrn_vcpu *vcpu);
 
+uint32_t vmsr_get_guest_msr_index(uint32_t msr);
+
+void update_msr_bitmap_x2apic_apicv(const struct acrn_vcpu *vcpu);
+void update_msr_bitmap_x2apic_passthru(const struct acrn_vcpu *vcpu);
+
 struct run_context;
-int vmx_vmrun(struct run_context *context, int ops, int ibrs);
+int32_t vmx_vmrun(struct run_context *context, int32_t ops, int32_t ibrs);
 
-int general_sw_loader(struct acrn_vm *vm);
+int32_t general_sw_loader(struct acrn_vm *vm);
 
-typedef int (*vm_sw_loader_t)(struct acrn_vm *vm);
+typedef int32_t (*vm_sw_loader_t)(struct acrn_vm *vm);
 extern vm_sw_loader_t vm_sw_loader;
 /**
  * @brief Data transfering between hypervisor and VM
@@ -170,7 +138,7 @@ extern vm_sw_loader_t vm_sw_loader;
  *   continuous
  * @pre Pointer vm is non-NULL
  */
-int copy_from_gpa(struct acrn_vm *vm, void *h_ptr, uint64_t gpa, uint32_t size);
+int32_t copy_from_gpa(struct acrn_vm *vm, void *h_ptr, uint64_t gpa, uint32_t size);
 /**
  * @brief Copy data from HV address space to VM GPA space
  *
@@ -189,7 +157,7 @@ int copy_from_gpa(struct acrn_vm *vm, void *h_ptr, uint64_t gpa, uint32_t size);
  *   continuous
  * @pre Pointer vm is non-NULL
  */
-int copy_to_gpa(struct acrn_vm *vm, void *h_ptr, uint64_t gpa, uint32_t size);
+int32_t copy_to_gpa(struct acrn_vm *vm, void *h_ptr, uint64_t gpa, uint32_t size);
 /**
  * @brief Copy data from VM GVA space to HV address space
  *
@@ -203,7 +171,7 @@ int copy_to_gpa(struct acrn_vm *vm, void *h_ptr, uint64_t gpa, uint32_t size);
  * @param[out] err_code The page fault flags
  * @param[out] fault_addr The GVA address that causes a page fault
  */
-int copy_from_gva(struct acrn_vcpu *vcpu, void *h_ptr, uint64_t gva,
+int32_t copy_from_gva(struct acrn_vcpu *vcpu, void *h_ptr, uint64_t gva,
 	uint32_t size, uint32_t *err_code, uint64_t *fault_addr);
 /**
  * @brief Copy data from HV address space to VM GVA space
@@ -218,9 +186,8 @@ int copy_from_gva(struct acrn_vcpu *vcpu, void *h_ptr, uint64_t gva,
  * @param[out] err_code The page fault flags
  * @param[out] fault_addr The GVA address that causes a page fault
  */
-int copy_to_gva(struct acrn_vcpu *vcpu, void *h_ptr, uint64_t gva,
+int32_t copy_to_gva(struct acrn_vcpu *vcpu, void *h_ptr, uint64_t gva,
 	uint32_t size, uint32_t *err_code, uint64_t *fault_addr);
-extern struct acrn_vcpu_regs vm0_boot_context;
 /**
  * @}
  */

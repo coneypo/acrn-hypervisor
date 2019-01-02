@@ -8,10 +8,32 @@
 
 #include "guest/instr_emul.h"
 
-static void complete_ioreq(struct vhm_request *vhm_req)
+static void complete_ioreq(struct acrn_vcpu *vcpu, struct io_request *io_req)
 {
-	vhm_req->valid = 0;
+	union vhm_request_buffer *req_buf = NULL;
+	struct vhm_request *vhm_req;
+
+	req_buf = (union vhm_request_buffer *)(vcpu->vm->sw.io_shared_page);
+
+	stac();
+	vhm_req = &req_buf->req_queue[vcpu->vcpu_id];
+	if (io_req != NULL) {
+		switch (vcpu->req.type) {
+		case REQ_PORTIO:
+			io_req->reqs.pio.value = vhm_req->reqs.pio.value;
+			break;
+
+		case REQ_MMIO:
+			io_req->reqs.mmio.value = vhm_req->reqs.mmio.value;
+			break;
+
+		default:
+			/*no actions are required for other cases.*/
+			break;
+		}
+	}
 	atomic_store32(&vhm_req->processed, REQ_STATE_FREE);
+	clac();
 }
 
 /**
@@ -46,21 +68,11 @@ emulate_pio_post(struct acrn_vcpu *vcpu, const struct io_request *io_req)
  * @remark This function must be called after the VHM request corresponding to
  * \p vcpu being transferred to the COMPLETE state.
  */
-void dm_emulate_pio_post(struct acrn_vcpu *vcpu)
+static void dm_emulate_pio_post(struct acrn_vcpu *vcpu)
 {
-	uint16_t cur = vcpu->vcpu_id;
-	union vhm_request_buffer *req_buf = NULL;
 	struct io_request *io_req = &vcpu->req;
-	struct pio_request *pio_req = &io_req->reqs.pio;
-	struct vhm_request *vhm_req;
 
-	req_buf = (union vhm_request_buffer *)(vcpu->vm->sw.io_shared_page);
-	vhm_req = &req_buf->req_queue[cur];
-
-	pio_req->value = vhm_req->reqs.pio.value;
-
-	/* VHM emulation data already copy to req, mark to free slot now */
-	complete_ioreq(vhm_req);
+	complete_ioreq(vcpu, io_req);
 
 	emulate_pio_post(vcpu, io_req);
 }
@@ -99,19 +111,9 @@ void emulate_mmio_post(const struct acrn_vcpu *vcpu, const struct io_request *io
  */
 void dm_emulate_mmio_post(struct acrn_vcpu *vcpu)
 {
-	uint16_t cur = vcpu->vcpu_id;
 	struct io_request *io_req = &vcpu->req;
-	struct mmio_request *mmio_req = &io_req->reqs.mmio;
-	union vhm_request_buffer *req_buf;
-	struct vhm_request *vhm_req;
 
-	req_buf = (union vhm_request_buffer *)(vcpu->vm->sw.io_shared_page);
-	vhm_req = &req_buf->req_queue[cur];
-
-	mmio_req->value = vhm_req->reqs.mmio.value;
-
-	/* VHM emulation data already copy to req, mark to free slot now */
-	complete_ioreq(vhm_req);
+	complete_ioreq(vcpu, io_req);
 
 	emulate_mmio_post(vcpu, io_req);
 }
@@ -134,50 +136,56 @@ static void io_instr_dest_handler(struct io_request *io_req)
  */
 void emulate_io_post(struct acrn_vcpu *vcpu)
 {
-	union vhm_request_buffer *req_buf;
-	struct vhm_request *vhm_req;
-
-	req_buf = (union vhm_request_buffer *)vcpu->vm->sw.io_shared_page;
-	vhm_req = &req_buf->req_queue[vcpu->vcpu_id];
-
-	if ((vhm_req->valid == 0) ||
-		(atomic_load32(&vhm_req->processed) != REQ_STATE_COMPLETE)) {
-		return;
-	}
-
-	/*
-	 * If vcpu is in Zombie state and will be destroyed soon. Just
-	 * mark ioreq done and don't resume vcpu.
-	 */
-	if (vcpu->state == VCPU_ZOMBIE) {
-		complete_ioreq(vhm_req);
-		return;
-	}
-
-	switch (vcpu->req.type) {
-	case REQ_MMIO:
-		request_vcpu_pre_work(vcpu, ACRN_VCPU_MMIO_COMPLETE);
-		break;
-
-	case REQ_PORTIO:
-	case REQ_PCICFG:
-		/* REQ_PORTIO on 0xcf8 & 0xcfc may switch to REQ_PCICFG in some
-		 * cases. It works to apply the post-work for REQ_PORTIO on
-		 * REQ_PCICFG because the format of the first 28 bytes of
-		 * REQ_PORTIO & REQ_PCICFG requests are exactly the same and
-		 * post-work is mainly interested in the read value.
+	if (get_vhm_req_state(vcpu->vm, vcpu->vcpu_id) == REQ_STATE_COMPLETE) {
+		/*
+		 * If vcpu is in Zombie state and will be destroyed soon. Just
+		 * mark ioreq done and don't resume vcpu.
 		 */
-		dm_emulate_pio_post(vcpu);
-		break;
+		if (vcpu->state == VCPU_ZOMBIE) {
+			complete_ioreq(vcpu, NULL);
+		} else {
+			switch (vcpu->req.type) {
+			case REQ_MMIO:
+				/*
+				 * In IO completion polling mode, the post work of IO emulation will
+				 * be running on its own pcpu, then we can do MMIO post work directly;
+				 * While in notification mode, the post work of IO emulation will be
+				 * running on SOS pcpu, then we need request_vcpu_pre_work and let
+				 * its own pcpu get scheduled and finish the MMIO post work.
+				 */
+				if (!vcpu->vm->sw.is_completion_polling) {
+					request_vcpu_pre_work(vcpu, ACRN_VCPU_MMIO_COMPLETE);
+				} else {
+					dm_emulate_mmio_post(vcpu);
+				}
+				break;
 
-	default:
-		/* REQ_WP can only be triggered on writes which do not need
-		 * post-work. Just mark the ioreq done. */
-		complete_ioreq(vhm_req);
-		break;
+			case REQ_PORTIO:
+			case REQ_PCICFG:
+				/*
+				 * REQ_PORTIO on 0xcf8 & 0xcfc may switch to REQ_PCICFG in some
+				 * cases. It works to apply the post-work for REQ_PORTIO on
+				 * REQ_PCICFG because the format of the first 28 bytes of
+				 * REQ_PORTIO & REQ_PCICFG requests are exactly the same and
+				 * post-work is mainly interested in the read value.
+				 */
+				dm_emulate_pio_post(vcpu);
+				break;
+
+			default:
+				/*
+				 * REQ_WP can only be triggered on writes which do not need
+				 * post-work. Just mark the ioreq done.
+				 */
+				complete_ioreq(vcpu, NULL);
+				break;
+			}
+
+			if (!vcpu->vm->sw.is_completion_polling) {
+				resume_vcpu(vcpu);
+			}
+		}
 	}
-
-	resume_vcpu(vcpu);
 }
 
 /**
@@ -186,16 +194,15 @@ void emulate_io_post(struct acrn_vcpu *vcpu)
  *
  * @pre io_req->type == REQ_PORTIO
  *
- * @return 0       - Successfully emulated by registered handlers.
- * @return -ENODEV - No proper handler found.
- * @return -EIO    - The request spans multiple devices and cannot be emulated.
+ * @retval 0 Successfully emulated by registered handlers.
+ * @retval -ENODEV No proper handler found.
+ * @retval -EIO The request spans multiple devices and cannot be emulated.
  */
-int32_t
+static int32_t
 hv_emulate_pio(const struct acrn_vcpu *vcpu, struct io_request *io_req)
 {
 	int32_t status = -ENODEV;
 	uint16_t port, size;
-	uint32_t mask;
 	uint32_t idx;
 	struct acrn_vm *vm = vcpu->vm;
 	struct pio_request *pio_req = &io_req->reqs.pio;
@@ -203,7 +210,6 @@ hv_emulate_pio(const struct acrn_vcpu *vcpu, struct io_request *io_req)
 
 	port = (uint16_t)pio_req->address;
 	size = (uint16_t)pio_req->size;
-	mask = 0xFFFFFFFFU >> (32U - 8U * size);
 
 	for (idx = 0U; idx < EMUL_PIO_IDX_MAX; idx++) {
 		handler = &(vm->arch_vm.emul_pio[idx]);
@@ -213,12 +219,12 @@ hv_emulate_pio(const struct acrn_vcpu *vcpu, struct io_request *io_req)
 		}
 
 		if (pio_req->direction == REQUEST_WRITE) {
-			if (handler->io_write) {
-				handler->io_write(vm, port, size, pio_req->value & mask);
+			if (handler->io_write != NULL) {
+				handler->io_write(vm, port, size, pio_req->value);
 			}
-			pr_dbg("IO write on port %04x, data %08x", port, pio_req->value & mask);
+			pr_dbg("IO write on port %04x, data %08x", port, pio_req->value);
 		} else {
-			if (handler->io_read) {
+			if (handler->io_read != NULL) {
 				pio_req->value = handler->io_read(vm, port, size);
 			}
 			pr_dbg("IO read on port %04x, data %08x", port, pio_req->value);
@@ -236,14 +242,14 @@ hv_emulate_pio(const struct acrn_vcpu *vcpu, struct io_request *io_req)
  *
  * @pre io_req->type == REQ_MMIO
  *
- * @return 0       - Successfully emulated by registered handlers.
- * @return -ENODEV - No proper handler found.
- * @return -EIO    - The request spans multiple devices and cannot be emulated.
+ * @retval 0 Successfully emulated by registered handlers.
+ * @retval -ENODEV No proper handler found.
+ * @retval -EIO The request spans multiple devices and cannot be emulated.
  */
 static int32_t
 hv_emulate_mmio(struct acrn_vcpu *vcpu, struct io_request *io_req)
 {
-	int status = -ENODEV;
+	int32_t status = -ENODEV;
 	uint16_t idx;
 	uint64_t address, size;
 	struct mmio_request *mmio_req = &io_req->reqs.mmio;
@@ -254,22 +260,28 @@ hv_emulate_mmio(struct acrn_vcpu *vcpu, struct io_request *io_req)
 
 	for (idx = 0U; idx < vcpu->vm->emul_mmio_regions; idx++) {
 		uint64_t base, end;
+		bool emulation_done = false;
 
 		mmio_handler = &(vcpu->vm->emul_mmio[idx]);
 		base = mmio_handler->range_start;
 		end = mmio_handler->range_end;
 
-		if ((address + size <= base) || (address >= end)) {
+		if (((address + size) <= base) || (address >= end)) {
 			continue;
-		} else if (!((address >= base) && (address + size <= end))) {
+		} else if (!((address >= base) && ((address + size) <= end))) {
 			pr_fatal("Err MMIO, address:0x%llx, size:%x", address, size);
-			return -EIO;
+			status = -EIO;
+			emulation_done = true;
 		} else {
 			/* Handle this MMIO operation */
-			if (mmio_handler->read_write) {
+			if (mmio_handler->read_write != NULL) {
 				status = mmio_handler->read_write(io_req, mmio_handler->handler_private_data);
-				break;
+				emulation_done = true;
 			}
+		}
+
+		if (emulation_done) {
+			break;
 		}
 	}
 
@@ -285,11 +297,11 @@ hv_emulate_mmio(struct acrn_vcpu *vcpu, struct io_request *io_req)
  * @param vcpu The virtual CPU that triggers the MMIO access
  * @param io_req The I/O request holding the details of the MMIO access
  *
- * @return 0       - Successfully emulated by registered handlers.
- * @return IOREQ_PENDING - The I/O request is delivered to VHM.
- * @return -EIO    - The request spans multiple devices and cannot be emulated.
- * @return -EINVAL - \p io_req has an invalid type.
- * @return Negative on other errors during emulation.
+ * @retval 0 Successfully emulated by registered handlers.
+ * @retval IOREQ_PENDING The I/O request is delivered to VHM.
+ * @retval -EIO The request spans multiple devices and cannot be emulated.
+ * @retval -EINVAL \p io_req has an invalid type.
+ * @retval <0 on other errors during emulation.
  */
 int32_t
 emulate_io(struct acrn_vcpu *vcpu, struct io_request *io_req)
@@ -354,6 +366,7 @@ int32_t pio_instr_vmexit_handler(struct acrn_vcpu *vcpu)
 {
 	int32_t status;
 	uint64_t exit_qual;
+	uint32_t mask;
 	int32_t cur_context_idx = vcpu->arch.cur_context;
 	struct io_request *io_req = &vcpu->req;
 	struct pio_request *pio_req = &io_req->reqs.pio;
@@ -364,8 +377,9 @@ int32_t pio_instr_vmexit_handler(struct acrn_vcpu *vcpu)
 	pio_req->size = vm_exit_io_instruction_size(exit_qual) + 1UL;
 	pio_req->address = vm_exit_io_instruction_port_number(exit_qual);
 	if (vm_exit_io_instruction_access_direction(exit_qual) == 0UL) {
+		mask = 0xFFFFFFFFU >> (32U - (8U * pio_req->size));
 		pio_req->direction = REQUEST_WRITE;
-		pio_req->value = (uint32_t)vcpu_get_gpreg(vcpu, CPU_REG_RAX);
+		pio_req->value = (uint32_t)vcpu_get_gpreg(vcpu, CPU_REG_RAX) & mask;
 	} else {
 		pio_req->direction = REQUEST_READ;
 	}
@@ -382,6 +396,8 @@ int32_t pio_instr_vmexit_handler(struct acrn_vcpu *vcpu)
 		emulate_pio_post(vcpu, io_req);
 	} else if (status == IOREQ_PENDING) {
 		status = 0;
+	} else {
+		/* do nothing */
 	}
 
 	return status;
@@ -434,10 +450,10 @@ static void deny_guest_pio_access(struct acrn_vm *vm, uint16_t port_address,
 void setup_io_bitmap(struct acrn_vm *vm)
 {
 	if (is_vm0(vm)) {
-		(void)memset(vm->arch_vm.io_bitmap, 0x00U, CPU_PAGE_SIZE * 2U);
+		(void)memset(vm->arch_vm.io_bitmap, 0x00U, PAGE_SIZE * 2U);
 	} else {
 		/* block all IO port access from Guest */
-		(void)memset(vm->arch_vm.io_bitmap, 0xFFU, CPU_PAGE_SIZE * 2U);
+		(void)memset(vm->arch_vm.io_bitmap, 0xFFU, PAGE_SIZE * 2U);
 	}
 }
 
@@ -474,50 +490,46 @@ void register_io_emulation_handler(struct acrn_vm *vm, uint32_t pio_idx,
  * @param end The end of the range (exclusive) \p read_write can emulate
  * @param handler_private_data Handler-specific data which will be passed to \p read_write when called
  *
- * @return 0 - Registration succeeds
- * @return -EINVAL - \p read_write is NULL, \p end is not larger than \p start or \p vm has been launched
+ * @retval 0 Registration succeeds
+ * @retval -EINVAL \p read_write is NULL, \p end is not larger than \p start or \p vm has been launched
  */
-int register_mmio_emulation_handler(struct acrn_vm *vm,
+int32_t register_mmio_emulation_handler(struct acrn_vm *vm,
 	hv_mem_io_handler_t read_write, uint64_t start,
 	uint64_t end, void *handler_private_data)
 {
-	int status = -EINVAL;
+	int32_t status = -EINVAL;
 	struct mem_io_node *mmio_node;
 
-	if ((vm->hw.created_vcpus > 0U) && vm->hw.vcpu_array[0].launched) {
-		ASSERT(false, "register mmio handler after vm launched");
-		return status;
-	}
+	if ((vm->hw.created_vcpus > 0U) && (vm->hw.vcpu_array[0].launched)) {
+		pr_err("register mmio handler after vm launched");
+	} else {
+		/* Ensure both a read/write handler and range check function exist */
+		if ((read_write != NULL) && (end > start)) {
+			if (vm->emul_mmio_regions >= CONFIG_MAX_EMULATED_MMIO_REGIONS) {
+				pr_err("the emulated mmio region is out of range");
+			} else {
+				mmio_node = &(vm->emul_mmio[vm->emul_mmio_regions]);
+				/* Fill in information for this node */
+				mmio_node->read_write = read_write;
+				mmio_node->handler_private_data = handler_private_data;
+				mmio_node->range_start = start;
+				mmio_node->range_end = end;
 
-	/* Ensure both a read/write handler and range check function exist */
-	if ((read_write != NULL) && (end > start)) {
+				(vm->emul_mmio_regions)++;
 
-		if (vm->emul_mmio_regions >= CONFIG_MAX_EMULATED_MMIO_REGIONS) {
-			pr_err("the emulated mmio region is out of range");
-			return status;
+				/*
+				 * SOS would map all its memory at beginning, so we
+				 * should unmap it. But UOS will not, so we shouldn't
+				 * need to unmap it.
+				 */
+				if (is_vm0(vm)) {
+					ept_mr_del(vm, (uint64_t *)vm->arch_vm.nworld_eptp, start, end - start);
+				}
+
+				/* Return success */
+				status = 0;
+			}
 		}
-		mmio_node = &(vm->emul_mmio[vm->emul_mmio_regions]);
-		/* Fill in information for this node */
-		mmio_node->read_write = read_write;
-		mmio_node->handler_private_data = handler_private_data;
-		mmio_node->range_start = start;
-		mmio_node->range_end = end;
-
-		(vm->emul_mmio_regions)++;
-
-		/*
-		 * SOS would map all its memory at beginning, so we
-		 * should unmap it. But UOS will not, so we shouldn't
-		 * need to unmap it.
-		 */
-		if (is_vm0(vm)) {
-			ept_mr_del(vm, (uint64_t *)vm->arch_vm.nworld_eptp,
-				start, end - start);
-		}
-
-		/* Return success */
-		status = 0;
-
 	}
 
 	/* Return status to caller */

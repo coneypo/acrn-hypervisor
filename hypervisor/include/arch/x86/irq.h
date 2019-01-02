@@ -50,7 +50,7 @@
 
 #define DEFAULT_DEST_MODE	IOAPIC_RTE_DESTLOG
 #define DEFAULT_DELIVERY_MODE	IOAPIC_RTE_DELLOPRI
-#define ALL_CPUS_MASK		((1U << phys_cpu_num) - 1U)
+#define ALL_CPUS_MASK		((1UL << (uint64_t)get_pcpu_nums()) - 1UL)
 
 #define IRQ_ALLOC_BITMAP_SIZE	INT_DIV_ROUNDUP(NR_IRQS, 64U)
 
@@ -74,12 +74,6 @@ struct smp_call_info_data {
 };
 
 void smp_call_function(uint64_t mask, smp_call_func_t func, void *data);
-int handle_level_interrupt_common(struct irq_desc *desc,
-	__unused void *handler_data);
-int common_handler_edge(struct irq_desc *desc, __unused void *handler_data);
-int common_dev_handler_level(struct irq_desc *desc,
-	__unused void *handler_data);
-int quick_handler_nolock(struct irq_desc *desc, __unused void *handler_data);
 
 void init_default_irqs(uint16_t cpu_id);
 
@@ -113,6 +107,9 @@ uint32_t irq_to_vector(uint32_t irq);
 #define	MSI_ADDR_BASE	0xfee00000UL
 #define	MSI_ADDR_RH	0x00000008UL	/* Redirection Hint */
 #define	MSI_ADDR_LOG	0x00000004UL	/* Destination Mode */
+#define	MSI_ADDR_DEST	0x000FF000UL	/* Destination Field */
+
+#define	MSI_ADDR_DEST_SHIFT	(12U)
 
 /* RFLAGS */
 #define HV_ARCH_VCPU_RFLAGS_IF              (1UL<<9U)
@@ -138,19 +135,19 @@ uint32_t irq_to_vector(uint32_t irq);
  * @param[in] vector   Vector of the exeception.
  * @param[in] err_code Error Code to be injected.
  *
- * @return 0 on success
- * @return -EINVAL on error that vector is invalid.
+ * @retval 0 on success
+ * @retval -EINVAL on error that vector is invalid.
  *
  * @pre vcpu != NULL
  */
-int vcpu_queue_exception(struct acrn_vcpu *vcpu, uint32_t vector, uint32_t err_code);
+int32_t vcpu_queue_exception(struct acrn_vcpu *vcpu, uint32_t vector, uint32_t err_code);
 
 /**
  * @brief Inject external interrupt to guest.
  *
  * @param[in] vcpu Pointer to vCPU.
  *
- * @return void
+ * @return None
  *
  * @pre vcpu != NULL
  */
@@ -161,7 +158,7 @@ void vcpu_inject_extint(struct acrn_vcpu *vcpu);
  *
  * @param[in] vcpu Pointer to vCPU.
  *
- * @return void
+ * @return None
  *
  * @pre vcpu != NULL
  */
@@ -173,7 +170,7 @@ void vcpu_inject_nmi(struct acrn_vcpu *vcpu);
  * @param[in] vcpu     Pointer to vCPU.
  * @param[in] err_code Error Code to be injected.
  *
- * @return void
+ * @return None
  *
  * @pre vcpu != NULL
  */
@@ -186,7 +183,7 @@ void vcpu_inject_gp(struct acrn_vcpu *vcpu, uint32_t err_code);
  * @param[in] addr     Address that result in PF.
  * @param[in] err_code Error Code to be injected.
  *
- * @return void
+ * @return None
  *
  * @pre vcpu != NULL
  */
@@ -197,7 +194,7 @@ void vcpu_inject_pf(struct acrn_vcpu *vcpu, uint64_t addr, uint32_t err_code);
  *
  * @param[in] vcpu Pointer to vCPU.
  *
- * @return void
+ * @return None
  *
  * @pre vcpu != NULL
  */
@@ -208,7 +205,7 @@ void vcpu_inject_ud(struct acrn_vcpu *vcpu);
  *
  * @param[in] vcpu Pointer to vCPU.
  *
- * @return void
+ * @return None
  *
  * @pre vcpu != NULL
  */
@@ -219,7 +216,7 @@ void vcpu_inject_ac(struct acrn_vcpu *vcpu);
  *
  * @param[in] vcpu Pointer to vCPU.
  *
- * @return void
+ * @return None
  *
  * @pre vcpu != NULL
  */
@@ -229,10 +226,10 @@ void vcpu_make_request(struct acrn_vcpu *vcpu, uint16_t eventid);
 /*
  * @pre vcpu != NULL
  */
-int exception_vmexit_handler(struct acrn_vcpu *vcpu);
-int interrupt_window_vmexit_handler(struct acrn_vcpu *vcpu);
-int external_interrupt_vmexit_handler(struct acrn_vcpu *vcpu);
-int acrn_handle_pending_request(struct acrn_vcpu *vcpu);
+int32_t exception_vmexit_handler(struct acrn_vcpu *vcpu);
+int32_t interrupt_window_vmexit_handler(struct acrn_vcpu *vcpu);
+int32_t external_interrupt_vmexit_handler(struct acrn_vcpu *vcpu);
+int32_t acrn_handle_pending_request(struct acrn_vcpu *vcpu);
 
 /**
  * @brief Initialize the interrupt

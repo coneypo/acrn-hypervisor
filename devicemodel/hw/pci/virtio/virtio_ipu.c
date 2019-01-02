@@ -234,7 +234,7 @@ virtio_ipu_set_status(void *base, uint64_t status)
 	ipu = (struct virtio_ipu *) base;
 	nvq = ipu->base.vops->nvq;
 	if (ipu->vbs_k.ipu_kstatus == VIRTIO_DEV_INIT_SUCCESS &&
-	    (status & VIRTIO_CR_STATUS_DRIVER_OK)) {
+	    (status & VIRTIO_CONFIG_S_DRIVER_OK)) {
 		/* time to kickoff VBS-K side */
 		/* init vdev first */
 		rc = virtio_ipu_k_dev_set(
@@ -320,7 +320,8 @@ virtio_ipu_init(struct vmctx *ctx, struct pci_vdev *dev, char *opts)
 		      &virtio_ipu_ops_k,
 		      ipu,
 		      dev,
-		      ipu->vq);
+		      ipu->vq,
+		      BACKEND_VBSK);
 
 	rc = virtio_ipu_k_init(ipu);
 	if (rc < 0) {

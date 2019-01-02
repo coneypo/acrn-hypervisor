@@ -64,6 +64,8 @@
 #include "atomic.h"
 #include "vmcfg_config.h"
 #include "vmcfg.h"
+#include "tpm.h"
+#include "virtio.h"
 
 #define GUEST_NIO_PORT		0x488	/* guest upcalls via i/o port */
 
@@ -79,13 +81,16 @@ char *vmname;
 int guest_ncpus;
 char *guest_uuid_str;
 char *vsbl_file_name;
+char *ovmf_file_name;
 char *kernel_file_name;
 char *elf_file_name;
 uint8_t trusty_enabled;
+char *mac_seed;
 bool stdio_in_use;
 
 static int virtio_msix = 1;
 static bool debugexit_enabled;
+static char mac_seed_str[50];
 
 static int acpi;
 
@@ -96,7 +101,7 @@ static cpuset_t cpumask;
 
 static void vm_loop(struct vmctx *ctx);
 
-static char vhm_request_page[4096] __attribute__ ((aligned(4096)));
+static char vhm_request_page[4096] __aligned(4096);
 
 static struct vhm_request *vhm_req_buf =
 				(struct vhm_request *)&vhm_request_page;
@@ -152,14 +157,16 @@ usage(int code)
 		"       --dump: show build-in VM configurations\n"
 #endif
 		"       --vsbl: vsbl file path\n"
+		"       --ovmf: ovmf file path\n"
 		"       --part_info: guest partition info file path\n"
 		"       --enable_trusty: enable trusty for guest\n"
 		"       --ptdev_no_reset: disable reset check for ptdev\n"
 		"       --debugexit: enable debug exit function\n"
 		"       --intr_monitor: enable interrupt storm monitor\n"
-		"............its params: threshold/s,probe-period(s),delay_time(ms),delay_duration(ms)\n",
-		progname, (int)strlen(progname), "", (int)strlen(progname), "",
-		(int)strlen(progname), "");
+		"       --vtpm2: Virtual TPM2 args: sock_path=$PATH_OF_SWTPM_SOCKET\n"
+		"            its params: threshold/s,probe-period(s),delay_time(ms),delay_duration(ms)\n",
+		progname, (int)strnlen(progname, PATH_MAX), "", (int)strnlen(progname, PATH_MAX), "",
+		(int)strnlen(progname, PATH_MAX), "");
 
 	exit(code);
 }
@@ -178,8 +185,10 @@ static int
 pincpu_parse(const char *opt)
 {
 	int vcpu, pcpu;
+	char *cp;
 
-	if (sscanf(opt, "%d:%d", &vcpu, &pcpu) != 2) {
+	if (dm_strtoi(opt, &cp, 10, &vcpu) || *cp != ':' ||
+		dm_strtoi(cp + 1, &cp, 10, &pcpu)) {
 		fprintf(stderr, "invalid format: %s\n", opt);
 		return -1;
 	}
@@ -228,6 +237,17 @@ int
 virtio_uses_msix(void)
 {
 	return virtio_msix;
+}
+
+size_t
+high_bios_size(void)
+{
+	size_t size = 0;
+
+	if (ovmf_file_name)
+		size = ovmf_image_size();
+
+	return roundup2(size, 2 * MB);
 }
 
 static void *
@@ -284,8 +304,8 @@ delete_cpu(struct vmctx *ctx, int vcpu)
 		exit(1);
 	}
 
-	pthread_join(mt_vmm_info[0].mt_thr, NULL);
 	vm_destroy_ioreq_client(ctx);
+	pthread_join(mt_vmm_info[0].mt_thr, NULL);
 
 	CPU_CLR_ATOMIC(vcpu, &cpumask);
 	return CPU_EMPTY(&cpumask);
@@ -392,7 +412,6 @@ handle_vmexit(struct vmctx *ctx, struct vhm_request *vhm_req, int vcpu)
 	}
 
 	(*handler[exitcode])(ctx, vhm_req, &vcpu);
-	atomic_store(&vhm_req->processed, REQ_STATE_COMPLETE);
 
 	/* We cannot notify the VHM/hypervisor on the request completion at this
 	 * point if the UOS is in suspend or system reset mode, as the VM is
@@ -446,6 +465,8 @@ vm_init_vdevs(struct vmctx *ctx)
 	if (ret < 0)
 		goto pci_fail;
 
+	init_vtpm2(ctx);
+
 	return 0;
 
 pci_fail:
@@ -480,6 +501,7 @@ vm_deinit_vdevs(struct vmctx *ctx)
 	atkbdc_deinit(ctx);
 	pci_irq_deinit(ctx);
 	ioapic_deinit();
+	deinit_vtpm2(ctx);
 }
 
 static void
@@ -527,13 +549,11 @@ vm_reset_vdevs(struct vmctx *ctx)
 static void
 vm_system_reset(struct vmctx *ctx)
 {
-	int vcpu_id = 0;
-
 	/*
 	 * If we get system reset request, we don't want to exit the
 	 * vcpu_loop/vm_loop/mevent_loop. So we do:
 	 *   1. pause VM
-	 *   2. notify request done to reset ioreq state in vhm
+	 *   2. flush and clear ioreqs
 	 *   3. reset virtual devices
 	 *   4. load software for UOS
 	 *   5. hypercall reset vm
@@ -541,49 +561,23 @@ vm_system_reset(struct vmctx *ctx)
 	 */
 
 	vm_pause(ctx);
-	for (vcpu_id = 0; vcpu_id < 4; vcpu_id++) {
-		struct vhm_request *vhm_req;
 
-		vhm_req = &vhm_req_buf[vcpu_id];
-		/*
-		 * The state of the VHM request already assigned to DM can be
-		 * COMPLETE if it has already been processed by the vm_loop, or
-		 * PROCESSING if the request is assigned to DM after vm_loop
-		 * checks the requests but before this point.
-		 *
-		 * Unless under emergency mode, the vcpu writing to the ACPI PM
-		 * CR should be the only vcpu of that VM that is still
-		 * running. In this case there should be only one completed
-		 * request which is the APIC PM CR write. Notify the completion
-		 * of that request here (after the VM is paused) to reset its
-		 * state.
-		 *
-		 * When handling emergency mode triggered by one vcpu without
-		 * offlining any other vcpus, there can be multiple VHM requests
-		 * with various states. Currently the context of that VM in the
-		 * DM, VHM and hypervisor will be destroyed and recreated,
-		 * causing the states of VHM requests to be dropped.
-		 *
-		 * TODO: If the emergency mode is handled without context
-		 * deletion and recreation, we should be careful on potential
-		 * races when reseting VHM request states. Some considerations
-		 * include:
-		 *
-		 *     * Use cmpxchg instead of load+store when distributing
-		 *       requests.
-		 *
-		 *     * vm_reset in VHM should clean up the ioreq bitmap, while
-		 *       vm_reset in the hypervisor should cleanup the states of
-		 *       VHM requests.
-		 *
-		 *     * vm_reset in VHM should hold a mutex to block the
-		 *       request distribution tasklet from assigned more
-		 *       requests before VM reset is done.
-		 */
-		if ((atomic_load(&vhm_req->processed) == REQ_STATE_COMPLETE) &&
-			(vhm_req->client == ctx->ioreq_client))
-			vm_notify_request_done(ctx, vcpu_id);
-	}
+	/*
+	 * After vm_pause, there should be no new coming ioreq.
+	 *
+	 * Unless under emergency mode, the vcpu writing to the ACPI PM
+	 * CR should be the only vcpu of that VM that is still
+	 * running. In this case there should be only one completed
+	 * request which is the APIC PM CR write. VM reset will reset it
+	 *
+	 * When handling emergency mode triggered by one vcpu without
+	 * offlining any other vcpus, there can be multiple VHM requests
+	 * with various states. We should be careful on potential races
+	 * when resetting especially in SMP SOS. vm_clear_ioreq can be used
+	 * to clear all ioreq status in VHM after VM pause, then let VM
+	 * reset in hypervisor reset all ioreqs.
+	 */
+	vm_clear_ioreq(ctx);
 
 	vm_reset_vdevs(ctx);
 	vm_reset(ctx);
@@ -598,31 +592,19 @@ vm_system_reset(struct vmctx *ctx)
 static void
 vm_suspend_resume(struct vmctx *ctx)
 {
-	int vcpu_id = 0;
-
 	/*
 	 * If we get warm reboot request, we don't want to exit the
 	 * vcpu_loop/vm_loop/mevent_loop. So we do:
 	 *   1. pause VM
-	 *   2. notify request done to reset ioreq state in vhm
+	 *   2. flush and clear ioreqs
 	 *   3. stop vm watchdog
 	 *   4. wait for resume signal
 	 *   5. reset vm watchdog
 	 *   6. hypercall restart vm
 	 */
 	vm_pause(ctx);
-	for (vcpu_id = 0; vcpu_id < 4; vcpu_id++) {
-		struct vhm_request *vhm_req;
 
-		vhm_req = &vhm_req_buf[vcpu_id];
-		/* See the comments in vm_system_reset() for considerations of
-		 * the notification below.
-		 */
-		if ((atomic_load(&vhm_req->processed) == REQ_STATE_COMPLETE) &&
-			(vhm_req->client == ctx->ioreq_client))
-			vm_notify_request_done(ctx, vcpu_id);
-	}
-
+	vm_clear_ioreq(ctx);
 	vm_stop_watchdog(ctx);
 	wait_for_resume(ctx);
 
@@ -696,13 +678,17 @@ sig_handler_term(int signo)
 
 enum {
 	CMD_OPT_VSBL = 1000,
+	CMD_OPT_OVMF,
 	CMD_OPT_PART_INFO,
 	CMD_OPT_TRUSTY_ENABLE,
+	CMD_OPT_VIRTIO_POLL_ENABLE,
+	CMD_OPT_MAC_SEED,
 	CMD_OPT_PTDEV_NO_RESET,
 	CMD_OPT_DEBUGEXIT,
 	CMD_OPT_VMCFG,
 	CMD_OPT_DUMP,
 	CMD_OPT_INTR_MONITOR,
+	CMD_OPT_VTPM2,
 };
 
 static struct option long_options[] = {
@@ -730,13 +716,17 @@ static struct option long_options[] = {
 	{"dump",		required_argument,	0, CMD_OPT_DUMP},
 #endif
 	{"vsbl",		required_argument,	0, CMD_OPT_VSBL},
+	{"ovmf",		required_argument,	0, CMD_OPT_OVMF},
 	{"part_info",		required_argument,	0, CMD_OPT_PART_INFO},
 	{"enable_trusty",	no_argument,		0,
 					CMD_OPT_TRUSTY_ENABLE},
+	{"virtio_poll",		required_argument,	0, CMD_OPT_VIRTIO_POLL_ENABLE},
+	{"mac_seed",		required_argument,	0, CMD_OPT_MAC_SEED},
 	{"ptdev_no_reset",	no_argument,		0,
 		CMD_OPT_PTDEV_NO_RESET},
 	{"debugexit",		no_argument,		0, CMD_OPT_DEBUGEXIT},
 	{"intr_monitor",	required_argument,	0, CMD_OPT_INTR_MONITOR},
+	{"vtpm2",		required_argument,	0, CMD_OPT_VTPM2},
 	{0,			0,			0,  0  },
 };
 
@@ -775,7 +765,7 @@ dm_run(int argc, char *argv[])
 			}
 			break;
 		case 'c':
-			guest_ncpus = atoi(optarg);
+			dm_strtoi(optarg, NULL, 0, &guest_ncpus);
 			break;
 		case 'E':
 			if (acrn_parse_elf(optarg) != 0)
@@ -839,8 +829,14 @@ dm_run(int argc, char *argv[])
 			print_version();
 			break;
 		case CMD_OPT_VSBL:
-			if (acrn_parse_vsbl(optarg) != 0) {
+			if (high_bios_size() == 0 && acrn_parse_vsbl(optarg) != 0) {
 				errx(EX_USAGE, "invalid vsbl param %s", optarg);
+				exit(1);
+			}
+			break;
+		case CMD_OPT_OVMF:
+			if (!vsbl_file_name && acrn_parse_ovmf(optarg) != 0) {
+				errx(EX_USAGE, "invalid ovmf param %s", optarg);
 				exit(1);
 			}
 			break;
@@ -855,11 +851,30 @@ dm_run(int argc, char *argv[])
 		case CMD_OPT_TRUSTY_ENABLE:
 			trusty_enabled = 1;
 			break;
+		case CMD_OPT_VIRTIO_POLL_ENABLE:
+			if (acrn_parse_virtio_poll_interval(optarg) != 0) {
+				errx(EX_USAGE,
+					"invalid virtio poll interval %s",
+					optarg);
+				exit(1);
+			}
+			break;
+		case CMD_OPT_MAC_SEED:
+			strncpy(mac_seed_str, optarg, sizeof(mac_seed_str));
+			mac_seed_str[sizeof(mac_seed_str) - 1] = '\0';
+			mac_seed = mac_seed_str;
+			break;
 		case CMD_OPT_PTDEV_NO_RESET:
 			ptdev_no_reset(true);
 			break;
 		case CMD_OPT_DEBUGEXIT:
 			debugexit_enabled = true;
+			break;
+		case CMD_OPT_VTPM2:
+			if (acrn_parse_vtpm2(optarg) != 0) {
+				errx(EX_USAGE, "invalid vtpm2 param %s", optarg);
+				exit(1);
+			}
 			break;
 		case CMD_OPT_INTR_MONITOR:
 			if (acrn_parse_intr_monitor(optarg) != 0) {
@@ -1006,10 +1021,10 @@ int main(int argc, char *argv[])
 		switch (c) {
 		case CMD_OPT_VMCFG:
 			vmcfg = 1;
-			index = atoi(optarg);
+			dm_strtoi(optarg, NULL, 0, &index);
 			break;
 		case CMD_OPT_DUMP:
-			index = atoi(optarg);
+			dm_strtoi(optarg, NULL, 0, &index);
 			vmcfg_dump(index, long_options, optstr);
 			return 0;
 		default:

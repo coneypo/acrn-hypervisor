@@ -82,6 +82,9 @@ SRCS += hw/platform/acpi/acpi.c
 SRCS += hw/platform/acpi/acpi_pm.c
 SRCS += hw/platform/rpmb/rpmb_sim.c
 SRCS += hw/platform/rpmb/rpmb_backend.c
+SRCS += hw/platform/tpm/tpm_emulator.c
+SRCS += hw/platform/tpm/tpm_crb.c
+SRCS += hw/platform/tpm/tpm.c
 SRCS += hw/platform/debugexit.c
 SRCS += hw/pci/wdt_i6300esb.c
 SRCS += hw/pci/lpc.c
@@ -101,6 +104,8 @@ SRCS += hw/pci/virtio/virtio_rnd.c
 SRCS += hw/pci/virtio/virtio_ipu.c
 SRCS += hw/pci/virtio/virtio_hyper_dmabuf.c
 SRCS += hw/pci/virtio/virtio_mei.c
+SRCS += hw/pci/virtio/virtio_coreu.c
+SRCS += hw/pci/virtio/virtio_hdcp.c
 SRCS += hw/pci/virtio/virtio_rpmb.c
 SRCS += hw/pci/irq.c
 SRCS += hw/pci/uart.c
@@ -113,6 +118,7 @@ SRCS += core/monitor.c
 SRCS += core/sw_load_common.c
 SRCS += core/sw_load_bzimage.c
 SRCS += core/sw_load_vsbl.c
+SRCS += core/sw_load_ovmf.c
 SRCS += core/sw_load_elf.c
 SRCS += core/smbiostbl.c
 SRCS += core/mevent.c
@@ -150,6 +156,7 @@ PROGRAM := acrn-dm
 
 SAMPLES_NUC := $(wildcard samples/nuc/*)
 SAMPLES_MRB := $(wildcard samples/apl-mrb/*)
+SAMPLES_UP2 := $(wildcard samples/up2/*)
 
 BIOS_BIN := $(wildcard bios/*)
 
@@ -203,6 +210,9 @@ $(DM_OBJDIR)/%.o: %.c $(HEADERS)
 
 install: $(DM_OBJDIR)/$(PROGRAM) install-samples-nuc install-samples-mrb install-bios install-vmcfg
 	install -D --mode=0755 $(DM_OBJDIR)/$(PROGRAM) $(DESTDIR)/usr/bin/$(PROGRAM)
+
+install-samples-up2: $(SAMPLES_UP2)
+	install -D -t $(DESTDIR)/usr/share/acrn/samples/up2 $^
 
 install-samples-nuc: $(SAMPLES_NUC)
 	install -D -t $(DESTDIR)/usr/share/acrn/samples/nuc $^

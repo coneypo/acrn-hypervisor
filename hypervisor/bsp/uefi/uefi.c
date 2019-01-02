@@ -6,6 +6,7 @@
 
 #include <hypervisor.h>
 #include <multiboot.h>
+#include <boot_context.h>
 #include <vm0_boot.h>
 
 #ifdef CONFIG_EFI_STUB
@@ -13,9 +14,9 @@ static void efi_init(void);
 
 struct efi_context* efi_ctx = NULL;
 struct lapic_regs uefi_lapic_regs;
-static int efi_initialized;
+static int32_t efi_initialized;
 
-void efi_spurious_handler(int vector)
+void efi_spurious_handler(int32_t vector)
 {
 	struct acrn_vcpu* vcpu;
 
@@ -32,11 +33,11 @@ void efi_spurious_handler(int vector)
 	return;
 }
 
-int uefi_sw_loader(struct acrn_vm *vm)
+int32_t uefi_sw_loader(struct acrn_vm *vm)
 {
-	int ret = 0;
+	int32_t ret = 0;
 	struct acrn_vcpu *vcpu = get_primary_vcpu(vm);
-	struct acrn_vcpu_regs *vcpu_regs = &vm0_boot_context;
+	struct acrn_vcpu_regs *vcpu_regs = &boot_context;
 
 	ASSERT(vm != NULL, "Incorrect argument");
 
@@ -47,8 +48,8 @@ int uefi_sw_loader(struct acrn_vm *vm)
 	/* For UEFI platform, the bsp init regs come from two places:
 	 * 1. saved in efi_boot: gpregs, rip
 	 * 2. saved when HV started: other registers
-	 * We copy the info saved in efi_boot to vm0_boot_context and
-	 * init bsp with vm0_boot_context.
+	 * We copy the info saved in efi_boot to boot_context and
+	 * init bsp with boot_context.
 	 */
 	memcpy_s(&(vcpu_regs->gprs), sizeof(struct acrn_gp_regs),
 		&(efi_ctx->vcpu_regs.gprs), sizeof(struct acrn_gp_regs));

@@ -56,7 +56,7 @@ struct acrn_vioapic {
 	union ioapic_rte rtbl[REDIR_ENTRIES_HW];
 	/* pin_state status bitmap: 1 - high, 0 - low */
 	uint64_t pin_state[STATE_BITMAP_SIZE];
-	struct ptdev_remapping_info *vpin_to_pt_entry[VIOAPIC_MAX_PIN];
+	struct ptirq_remapping_info *vpin_to_pt_entry[VIOAPIC_MAX_PIN];
 };
 
 void    vioapic_init(struct acrn_vm *vm);
@@ -80,7 +80,7 @@ void	vioapic_reset(struct acrn_vioapic *vioapic);
  *
  * @pre irq < vioapic_pincount(vm)
  *
- * @return void
+ * @return None
  */
 void	vioapic_set_irq(struct acrn_vm *vm, uint32_t irq, uint32_t operation);
 
@@ -96,7 +96,7 @@ void	vioapic_set_irq(struct acrn_vm *vm, uint32_t irq, uint32_t operation);
  *			GSI_RAISING_PULSE/GSI_FALLING_PULSE
  *
  * @pre irq < vioapic_pincount(vm)
- * @return void
+ * @return None
  */
 void	vioapic_set_irq_nolock(struct acrn_vm *vm, uint32_t irq, uint32_t operation);
 void	vioapic_update_tmr(struct acrn_vcpu *vcpu);
@@ -104,7 +104,7 @@ void	vioapic_update_tmr(struct acrn_vcpu *vcpu);
 uint32_t	vioapic_pincount(const struct acrn_vm *vm);
 void	vioapic_process_eoi(struct acrn_vm *vm, uint32_t vector);
 void	vioapic_get_rte(struct acrn_vm *vm, uint32_t pin, union ioapic_rte *rte);
-int		vioapic_mmio_access_handler(struct io_request *io_req, void *handler_private_data);
+int32_t	vioapic_mmio_access_handler(struct io_request *io_req, void *handler_private_data);
 
 /**
  * @}

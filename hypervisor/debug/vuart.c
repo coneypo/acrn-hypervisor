@@ -29,9 +29,12 @@
  */
 
 #include <hypervisor.h>
+#include <ioapic.h>
 
 #include "uart16550.h"
 
+static uint8_t vuart_com_irq =  CONFIG_COM_IRQ;
+static uint16_t vuart_com_base = CONFIG_COM_BASE;
 
 #ifndef CONFIG_PARTITION_MODE
 static char vuart_rx_buf[RX_BUF_SIZE];
@@ -110,8 +113,7 @@ static uint8_t vuart_intr_reason(const struct acrn_vuart *vu)
 {
 	if (((vu->lsr & LSR_OE) != 0U) && ((vu->ier & IER_ELSI) != 0U)) {
 		return IIR_RLS;
-	} else if ((fifo_numchars(&vu->rxfifo) > 0U) &&
-					((vu->ier & IER_ERBFI) != 0U)) {
+	} else if ((fifo_numchars(&vu->rxfifo) > 0U) && ((vu->ier & IER_ERBFI) != 0U)) {
 		return IIR_RXTOUT;
 	} else if (vu->thre_int_pending && ((vu->ier & IER_ETBEI) != 0U)) {
 		return IIR_TXRDY;
@@ -131,7 +133,7 @@ static void vuart_toggle_intr(const struct acrn_vuart *vu)
 	uint32_t operation;
 
 	intr_reason = vuart_intr_reason(vu);
-	vioapic_get_rte(vu->vm, CONFIG_COM_IRQ, &rte);
+	vioapic_get_rte(vu->vm, vuart_com_irq, &rte);
 
 	/* TODO:
 	 * Here should assert vuart irq according to CONFIG_COM_IRQ polarity.
@@ -142,15 +144,13 @@ static void vuart_toggle_intr(const struct acrn_vuart *vu)
 	 * we want to make it as an known issue.
 	 */
 	if ((rte.full & IOAPIC_RTE_INTPOL) != 0UL) {
-		operation = (intr_reason != IIR_NOPEND) ?
-				GSI_SET_LOW : GSI_SET_HIGH;
+		operation = (intr_reason != IIR_NOPEND) ? GSI_SET_LOW : GSI_SET_HIGH;
 	} else {
-		operation = (intr_reason != IIR_NOPEND) ?
-				GSI_SET_HIGH : GSI_SET_LOW;
+		operation = (intr_reason != IIR_NOPEND) ? GSI_SET_HIGH : GSI_SET_LOW;
 	}
 
-	vpic_set_irq(vu->vm, CONFIG_COM_IRQ, operation);
-	vioapic_set_irq(vu->vm, CONFIG_COM_IRQ, operation);
+	vpic_set_irq(vu->vm, vuart_com_irq, operation);
+	vioapic_set_irq(vu->vm, vuart_com_irq, operation);
 }
 
 static void vuart_write(struct acrn_vm *vm, uint16_t offset_arg,
@@ -201,8 +201,7 @@ static void vuart_write(struct acrn_vm *vm, uint16_t offset_arg,
 				fifo_reset(&vu->rxfifo);
 			}
 
-			vu->fcr = value_u8 &
-				(FCR_FIFOE | FCR_DMA | FCR_RX_MASK);
+			vu->fcr = value_u8 & (FCR_FIFOE | FCR_DMA | FCR_RX_MASK);
 		}
 		break;
 	case UART16550_LCR:
@@ -322,7 +321,7 @@ static void vuart_register_io_handler(struct acrn_vm *vm)
 {
 	struct vm_io_range range = {
 		.flags = IO_ATTR_RW,
-		.base = CONFIG_COM_BASE,
+		.base = vuart_com_base,
 		.len = 8U
 	};
 
@@ -401,9 +400,30 @@ void vuart_init(struct acrn_vm *vm)
 	vm->vuart.dlh = (uint8_t)(divisor >> 8U);
 
 	vm->vuart.active = false;
-	vm->vuart.base = CONFIG_COM_BASE;
+	vm->vuart.base = vuart_com_base;
 	vm->vuart.vm = vm;
 	vuart_fifo_init(vu);
 	vuart_lock_init(vu);
 	vuart_register_io_handler(vm);
+}
+
+bool hv_used_dbg_intx(uint8_t intx_pin)
+{
+	return is_dbg_uart_enabled() && (intx_pin == vuart_com_irq);
+}
+
+/* vuart=ttySx@irqN, like vuart=ttyS1@irq6 head "vuart=ttyS" is parsed */
+void vuart_set_property(const char *vuart_info)
+{
+	const uint16_t com_map[4] = {0x3f8, 0x2F8, 0x3E8, 0x2E8}; /* map to ttyS0-ttyS3 */
+	uint8_t com_idx;
+
+	com_idx = (uint8_t)(vuart_info[0] - '0');
+	if (com_idx < 4) {
+		vuart_com_base = com_map[com_idx];
+	}
+
+	if (strncmp(vuart_info + 1, "@irq", 4) == 0) {
+		vuart_com_irq = (uint8_t)strtol_deci(vuart_info + 5);
+	}
 }

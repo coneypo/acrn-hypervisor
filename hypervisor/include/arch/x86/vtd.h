@@ -129,11 +129,6 @@ static inline uint8_t iommu_cap_plmr(uint64_t cap)
 	return ((uint8_t)(cap >> 5U) & 1U);
 }
 
-static inline uint8_t iommu_cap_rwbf(uint64_t cap)
-{
-	return ((uint8_t)(cap >> 4U) & 1U);
-}
-
 static inline uint8_t iommu_cap_afl(uint64_t cap)
 {
 	return ((uint8_t)(cap >> 3U) & 1U);
@@ -291,7 +286,7 @@ static inline uint8_t iommu_ecap_pds(uint64_t ecap)
 #define DMA_CCMD_DEVICE_INVL (3UL << 61U)
 static inline uint64_t dma_ccmd_fm(uint8_t fm)
 {
-	return (((uint64_t)(fm & 0x3U)) << 32U);
+	return (((uint64_t)fm & 0x3UL) << 32UL);
 }
 
 #define DMA_CCMD_MASK_NOBIT 0UL
@@ -300,7 +295,7 @@ static inline uint64_t dma_ccmd_fm(uint8_t fm)
 #define DMA_CCMD_MASK_3BIT 3UL
 static inline uint64_t dma_ccmd_sid(uint16_t sid)
 {
-	return (((uint64_t)(sid & 0xffffU)) << 16U);
+	return (((uint64_t)sid & 0xffffUL) << 16UL);
 }
 
 static inline uint16_t dma_ccmd_did(uint16_t did)
@@ -324,7 +319,7 @@ static inline uint8_t dma_ccmd_get_caig_32(uint32_t gaig)
 #define DMA_IOTLB_DW				(((uint64_t)1UL) << 48U)
 static inline uint64_t dma_iotlb_did(uint16_t did)
 {
-	return (((uint64_t)(did & 0xffffU)) << 32U);
+	return (((uint64_t)did & 0xffffUL) << 32UL);
 }
 
 static inline uint8_t dma_iotlb_get_iaig_32(uint32_t iai)
@@ -496,13 +491,13 @@ struct iommu_domain;
  * @param[in]    bus the 8-bit bus number of the device
  * @param[in]    devfun the 8-bit device(5-bit):function(3-bit) of the device
  *
- * @return 0 - on success.
- * @return 1 - fail to unassign the device
+ * @retval 0 on success.
+ * @retval 1 fail to unassign the device
  *
  * @pre domain != NULL
  *
  */
-int assign_iommu_device(struct iommu_domain *domain, uint8_t bus, uint8_t devfun);
+int32_t assign_iommu_device(struct iommu_domain *domain, uint8_t bus, uint8_t devfun);
 
 /**
  * @brief Unassign a device specified by bus & devfun from a iommu domain .
@@ -513,13 +508,13 @@ int assign_iommu_device(struct iommu_domain *domain, uint8_t bus, uint8_t devfun
  * @param[in]    bus the 8-bit bus number of the device
  * @param[in]    devfun the 8-bit device(5-bit):function(3-bit) of the device
  *
- * @return 0 - on success.
- * @return 1 - fail to unassign the device
+ * @retval 0 on success.
+ * @retval 1 fail to unassign the device
  *
  * @pre domain != NULL
  *
  */
-int unassign_iommu_device(const struct iommu_domain *domain, uint8_t bus, uint8_t devfun);
+int32_t unassign_iommu_device(const struct iommu_domain *domain, uint8_t bus, uint8_t devfun);
 
 /**
  * @brief Create a iommu domain for a VM specified by vm_id.
@@ -530,8 +525,10 @@ int unassign_iommu_device(const struct iommu_domain *domain, uint8_t bus, uint8_
  * @param[in] translation_table the physcial address of EPT table of the VM specified by the vm_id
  * @param[in] addr_width address width of the VM
  *
- * @return Pointer pointer to iommu_domain
- * @return NULL if translation_table is 0
+ * @return Pointer to the created iommu_domain
+ *
+ * @retval NULL when \p translation_table is 0
+ * @retval !NULL when \p translation_table is not 0
  *
  * @pre vm_id is valid
  * @pre translation_table != 0
@@ -586,13 +583,15 @@ void resume_iommu(void);
 /**
  * @brief Init IOMMUs.
  *
- * Register DMAR units on the platform according to the pre-parsed information or DMAR table.
+ * Register DMAR units on the platform according to the pre-parsed information
+ * or DMAR table. IOMMU is a must have feature, if init_iommu failed, the system
+ * should not continue booting.
  *
- * @return 0 - on success
- * @return non-zero - iommu is a must have feature, if init_iommu failed, the system should not continue booting
+ * @retval 0 on success
+ * @retval <0 on failure
  *
  */
-int init_iommu(void);
+int32_t init_iommu(void);
 
 /**
  * @brief Init VM0 domain of iommu.
@@ -614,11 +613,11 @@ void init_iommu_vm0_domain(struct acrn_vm *vm0);
  *
  * @param[in] vm pointer to VM to check
  *
- * @return true - support
- * @return false - not support
+ * @retval true support
+ * @retval false not support
  *
  */
-bool iommu_snoop_supported(struct acrn_vm *vm);
+bool iommu_snoop_supported(const struct acrn_vm *vm);
 
 /**
   * @}
