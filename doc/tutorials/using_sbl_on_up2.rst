@@ -89,7 +89,7 @@ An example of the configuration file ``uos.json``:
        "DestinationType" : "virtual",
        "PartitionLayout" : [ { "disk" : "clearlinux.img", "partition" : 1, "size" : "100M", "type" : "EFI" },
                              { "disk" : "clearlinux.img", "partition" : 2, "size" : "10G", "type" : "linux" } ],
-       "FilesystemTypes" : [ { "disk" : "clearlinux.img", "partition" : 1, "type" : "ext2" },
+       "FilesystemTypes" : [ { "disk" : "clearlinux.img", "partition" : 1, "type" : "vfat" },
                              { "disk" : "clearlinux.img", "partition" : 2, "type" : "ext4" } ],
        "PartitionMountPoints" : [ { "disk" : "clearlinux.img", "partition" : 1, "mount" : "/boot" },
            		          { "disk" : "clearlinux.img", "partition" : 2, "mount" : "/" } ],
