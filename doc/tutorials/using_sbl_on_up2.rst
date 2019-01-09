@@ -102,37 +102,52 @@ An example of the configuration file ``uos.json``:
    the "Version" argument, ``"Version": 26000`` instead 
    of ``"Version": 26880`` for example.
 
-Clone the source code of ``acrn-hypervisor`` and build SOS and LaaG image:
+Clone the source code of ``acrn-hypervisor`` for building:
 
 .. code-block:: none
    
-   cd ~
-   git clone https://github.com/projectacrn/acrn-hypervisor
-   sudo ./acrn-hypervisor/devicemodel/samples/up2/create-up2-images.sh --images-type all \
+   $ cd ~
+   $ git clone https://github.com/projectacrn/acrn-hypervisor
+
+Build SOS and LaaG image:
+   
+.. code-block:: none   
+
+   $ sudo -s 
+   # ./acrn-hypervisor/devicemodel/samples/up2/create-up2-images.sh --images-type all \
       --clearlinux-version 26880 --laag-json uos.json --acrn-code-path ~/acrn-hypervisor/
 
-
-This step will generate the images of SOS and LaaG:
-
-* sos_boot.img
-* sos_rootfs.img
-* up2_laag.img
+.. note::
+   Run ``create-up2-images.sh`` as root.
 
 .. note::
    When building images, you can modify the ``--clearlinux-version`` argument 
    to a specific version (such as 26800). To generate the images of SOS only, 
    modify the ``--images-type`` argument to ``sos``.
    
+This step will generate the images of SOS and LaaG:
 
-We still need the binary image for GPT partitions and 
-configuration file for flashing:
+* sos_boot.img
+* sos_rootfs.img
+* up2_laag.img
 
-* partition_desc.bin
-* flash_LaaG.json
+Build the binary image ``partition_desc.bin`` for 
+GPT partitions, and change the partition layout 
+in ``partition_desc.ini`` if needed.
 
-.. note::
-   ``partition_desc.bin`` and ``flash_LaaG.json`` are in the diretory 
-   ``~/acrn-hypervisor/doc/tutorials/``.
+.. code-block:: none
+
+   $ wget https://raw.githubusercontent.com/projectacrn/acrn-hypervisor/master/doc/tutorials/gpt_ini2bin.py
+   $ wget https://raw.githubusercontent.com/projectacrn/acrn-hypervisor/master/doc/tutorials/partition_desc.ini  
+   $ sudo -s
+   # python2 gpt_ini2bin.py partition_desc.ini>partition_desc.bin
+
+
+We still need the configuration file for flashing:
+
+.. code-block:: none
+
+   $ wget https://raw.githubusercontent.com/projectacrn/acrn-hypervisor/master/doc/tutorials/flash_LaaG.json
 
 
 .. table::
@@ -179,14 +194,14 @@ SOS and LaaG Installation
 
    .. code-block:: none
 
-       ls /dev/ttyUSB*
+       $ ls /dev/ttyUSB*
        /dev/ttyUSB0
 
 #. Connect to board via ``minicom``, and use ``/dev/ttyUSB0`` for example:
 
    .. code-block:: none
 
-       sudo minicom -s /dev/ttyUSB0
+       $ sudo minicom -s /dev/ttyUSB0
        
    .. note::
       Please verify the minicom serial port settings are 115200 8N1 and
@@ -283,12 +298,12 @@ boot to ACRN hypervisor. And login SOS by following command:
 
 Launch UOS
 **********
-Run the ``launch_uos.sh`` script to launch the UOS:
+Run the ``launch_uos.sh`` script to launch Clear Linux as UOS.
     
    .. code-block:: none   
       
-      cd ~
-      wget https://raw.githubusercontent.com/projectacrn/acrn-hypervisor/master/doc/tutorials/launch_uos.sh
-      sudo ./launch_uos.sh -V 1
+      $ cd ~
+      $ wget https://raw.githubusercontent.com/projectacrn/acrn-hypervisor/master/doc/tutorials/launch_uos.sh
+      $ sudo ./launch_uos.sh -V 1
        
    **Congratulations**, you are now watching the User OS booting up!
