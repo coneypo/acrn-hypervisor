@@ -149,33 +149,33 @@ Q15. APL NUC/KBL NUC/UP2 fail to boot up when allocate memory > 16G
 
 A15. You must modify hypervisor/arch/x86/Kconfig:
 If memory is 32G, setup PLATFORM_RAM_SIZE = 32G
-.. code-block:: bash
+.. code-block:: none
 
-config PLATFORM_RAM_SIZE
+  config PLATFORM_RAM_SIZE
         hex "Size of the physical platform RAM"
         default 0x200000000 if PLATFORM_SBL
         default 0x800000000 if PLATFORM_UEFI
 
 setup SOS_RAM_SIZE =32G too (The SOS will have the whole resource)
-.. code-block:: bash
+.. code-block:: none
 
-config SOS_RAM_SIZE
+  config SOS_RAM_SIZE
         hex "Size of the vm0 (SOS) RAM"
         default 0x200000000 if PLATFORM_SBL
         default 0x800000000 if PLATFORM_UEFI
 
 setup UOS_RAM_SIZE to what you need, here setup 16G
-.. code-block:: bash
+.. code-block:: none
 
-config UOS_RAM_SIZE
+  config UOS_RAM_SIZE
         hex "Size of the User OS (UOS) RAM"
         default 0x100000000 if PLATFORM_SBL
         default 0x400000000 if PLATFORM_UEFI
 
 setup HV_RAM_SIZE(We will reserve memory for guest EPT paging table), if you setup 32G(default 16G),you must enlarge it with (32G-16G)/2M pages which size is 4K, below is after changed to 240M
-.. code-block:: bash
+.. code-block:: none
 
-config HV_RAM_SIZE
+  config HV_RAM_SIZE
     hex "Size of the RAM region used by the hypervisor"
     default 0x07800000 if PLATFORM_SBL
     default 0x0f000000 if PLATFORM_UEFI
