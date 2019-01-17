@@ -32,14 +32,14 @@ Q5. How to run Celadon as a Guest OS on ACRN on NUC ?
 
 .. code-block:: none
 
-   We°Øre still working on a setup guide now because Celadon and ACRN's kernel has updated to 4.19
+   We‚Äôre still working on a setup guide now because Celadon and ACRN's kernel has updated to 4.19
 
 Q6. Does SOS and UOS communicate with RPMSG in Intel ? if has RPMSG, which one has higher efficiency ? Does intel has plan to add RPMSG?
 
 .. code-block:: none
 
    Not yet, but once add, it  will support in principle;
-   Theoretically RPMSG has higher efficiency, RPMSG protol is more simple, RPMSG°Øs master and slave communicates via RPMSG°Øs backend as the switch;
+   Theoretically RPMSG has higher efficiency, RPMSG protol is more simple, RPMSG‚Äôs master and slave communicates via RPMSG‚Äôs backend as the switch;
 
    Not yet about add RPMSG.
 
@@ -55,19 +55,19 @@ Q1. How to fix "Fail to install Image on the APL NUC when use the USB storage"?
 
 .. code-block:: none
 
-    Change the Config °∞Secure Boot -> no check°±. 
+    Change the Config ‚ÄúSecure Boot -> no check‚Äù. 
 
     Details: How to modify this  parameter:
 
-    a: Press °∞F2°± to enter the interface when bootup the NUC
+    a: Press ‚ÄúF2‚Äù to enter the interface when bootup the NUC
 
-    b: No check °∞Secure Boot°± on the °∞Boot°± option
+    b: No check ‚ÄúSecure Boot‚Äù on the ‚ÄúBoot‚Äù option
 
-Q2. What°Øs about ACRN Android guest partition? Whether can use fastboot to flash Android some system or data?
+Q2. What‚Äôs about ACRN Android guest partition? Whether can use fastboot to flash Android some system or data?
 
 .. code-block:: none
 
-   It°Øs one big image file, Android guest has a lot of partition on this Image file;
+   It‚Äôs one big image file, Android guest has a lot of partition on this Image file;
 
    Yes
 
@@ -105,7 +105,7 @@ Q7. How does the UEFI BIOS deal with the acrn.efi and loader config file ?
 
    More info please refer  https://projectacrn.github.io/latest/introduction/index.html 
 
-Q8. ACRN boot up time is long at the KBL NUC(i7&i5), also console prints : °∞VMX ctrl 0x48b not fully enabled: request 0x18b but get 0x8b°±
+Q8. ACRN boot up time is long at the KBL NUC(i7&i5), also console prints : ‚ÄúVMX ctrl 0x48b not fully enabled: request 0x18b but get 0x8b‚Äù
 
 .. code-block:: none
 
@@ -155,7 +155,7 @@ Q10. If rpmb key has issue, will it affect vsbl load Android ?
 
    NO
 
-   Because virtual rpmb hasn°Øt realize on the ACRN, after realize ,it doesn°Øt affect the vsbl, but affect Android Disk Encryption
+   Because virtual rpmb hasn‚Äôt realize on the ACRN, after realize ,it doesn‚Äôt affect the vsbl, but affect Android Disk Encryption
 
 Q11. Which system does the SOS support ?
 
@@ -223,11 +223,11 @@ setup HV_RAM_SIZE(We will reserve memory for guest EPT paging table), if you set
     default 0x0f000000 if PLATFORM_UEFI
 
 
-Q16. There is no code about setting °∞tty ldisc°± in the dm ioc code part, how does the cbc data send to the ioc ?
+Q16. There is no code about setting ‚Äútty ldisc‚Äù in the dm ioc code part, how does the cbc data send to the ioc ?
 
 .. code-block:: none
 
-   dm send the cbc header°Øs uart packet, UOS kernel uses the cbc ldisc to analysis data. when systemd bootup cbc_attch, will set SOS cbc ldisc, and other SOS process  reveice/send cbc service data via directly open cbc char device.
+   dm send the cbc header‚Äôs uart packet, UOS kernel uses the cbc ldisc to analysis data. when systemd bootup cbc_attch, will set SOS cbc ldisc, and other SOS process  reveice/send cbc service data via directly open cbc char device.
 
 Q17. Intel processor access the peripherals devices through IN/OUT instruction?
 
@@ -241,12 +241,12 @@ Q1. Where can get vt-x vt-d detail spec?
 
 .. code-block:: none
 
-  VT-X: _`<https://software.intel.com/en-us/articles/intel-sdm>`_ 
+  VT-X:  `<https://software.intel.com/en-us/articles/intel-sdm>`_ 
 
-  VT-D: _`<https://software.intel.com/sites/default/files/managed/c5/15/vt-directed-io-spec.pdf>`_
+  VT-D:  `<https://software.intel.com/sites/default/files/managed/c5/15/vt-directed-io-spec.pdf>`_
 
 Q2. Whether Intel GPU spec is open?
 
 .. code-block:: none
 
-  _`<https://01.org/linuxgraphics/documentation/hardware-specification-prms>`_. 
+   `<https://01.org/linuxgraphics/documentation/hardware-specification-prms>`_. 
