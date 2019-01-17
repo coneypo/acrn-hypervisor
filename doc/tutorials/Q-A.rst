@@ -197,12 +197,14 @@ Resource
 ####################
 Q1. Where can get vt-x vt-d detail spec?
 
-A1. 
+.. code-block:: none
+
 VT-X: https://software.intel.com/en-us/articles/intel-sdm 
 
 VT-D: https://software.intel.com/sites/default/files/managed/c5/15/vt-directed-io-spec.pdf
 
 Q2. Whether Intel GPU spec is open?
 
-A2.  Yes,
- https://01.org/linuxgraphics/documentation/hardware-specification-prms 
+.. code-block:: none
+
+   https://01.org/linuxgraphics/documentation/hardware-specification-prms 
