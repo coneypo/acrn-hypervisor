@@ -33,7 +33,6 @@ CL_image=$(find /root/LaaG_02/ -name *.img)
    --virtio_poll 1000000 \
    -s 3,virtio-console,@stdio:stdio_port \
    -s 4,virtio-blk,$CL_image \
-   -s 5,virtio-net,tap0 \
   -B "root=/dev/vda3 rw rootwait maxcpus=$1 nohpet console=hvc0 \
   no_timer_check ignore_loglevel log_buf_len=16M \
   consoleblank=0 tsc=reliable x2apic_phys" hard_rtvm
