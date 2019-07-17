@@ -1,5 +1,6 @@
 #!/bin/bash
-# This is an example of launch script for KBL NUC7i7DNH, may need to revise for other platform.
+
+# Launch Preempt_RT
 
 # pci devices for passthru
 declare -A passthru_vpid
